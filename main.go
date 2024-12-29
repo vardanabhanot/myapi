@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -18,7 +20,7 @@ import (
 type api struct {
 	response      *http.Response
 	duration      time.Duration
-	headers       binding.ExternalUntypedMap
+	headers       binding.StringList
 	body          binding.String
 	statusBinding binding.String
 	sizeBinding   binding.String
@@ -30,6 +32,7 @@ func main() {
 	w := a.NewWindow("MyAPI")
 
 	w.Resize(fyne.NewSize(1024, 600))
+	w.CenterOnScreen()
 	api := &api{}
 	w.SetContent(api.makeGUI())
 	w.ShowAndRun()
@@ -45,6 +48,7 @@ func (a *api) makeGUI() fyne.CanvasObject {
 	a.sizeBinding = binding.BindString(&size)
 	a.timeBinding = binding.BindString(&time)
 	a.body = binding.BindString(&bodyResponse)
+	a.headers = binding.NewStringList()
 
 	sidebar := a.makeSideBar()
 	request := a.makeRequestUI()
@@ -108,10 +112,12 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 		a.response = response
 
 		// Convert response headers to a bindable map
-		headerMap := make(map[string]any)
+		headerMap := []string{}
 		for key, values := range response.Header {
-			headerMap[key] = values[0] // Get the first value for simplicity
+			headerMap = append(headerMap, key+"||"+values[0]) // Get the first value for simplicity
 		}
+
+		fmt.Println(response.Cookies())
 
 		a.headers.Set(headerMap)
 
@@ -165,19 +171,45 @@ func (a *api) makeResponseUI() fyne.CanvasObject {
 
 	bodyString, _ := a.body.Get()
 	responseTab := widget.NewRichTextWithText(bodyString)
-	headerMap := make(map[string]any)
-	a.headers = binding.BindUntypedMap(&headerMap)
+	headerMap, _ := a.headers.Get()
+	headerTable := widget.NewTable(
+		func() (int, int) {
+			return len(headerMap), 2
+		},
+		func() fyne.CanvasObject {
+			return container.NewStack(widget.NewLabel("wide content"))
+		},
+		func(i widget.TableCellID, o fyne.CanvasObject) {
+			rows := [][]string{}
+			for _, b := range headerMap {
+				row := strings.Split(b, "||")
+				rows = append(rows, row)
+			}
+
+			l := o.(*fyne.Container).Objects[0].(*widget.Label)
+			l.SetText(rows[i.Row][i.Col])
+			l.Wrapping = fyne.TextWrapWord
+		},
+	)
+	headerTable.SetColumnWidth(0, 200)
+	headerTable.SetColumnWidth(1, 300)
 
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Response", responseTab),
-		container.NewTabItem("Headers", widget.NewLabel("Headers here")),
+		container.NewTabItem("Headers", headerTable),
 		container.NewTabItem("Cookies", widget.NewLabel("Cookies here")),
 	)
+
+	a.headers.AddListener(binding.NewDataListener(func() {
+		headerMap, _ = a.headers.Get()
+	}))
 
 	a.body.AddListener(binding.NewDataListener(func() {
 		bodyString, _ = a.body.Get()
 		responseTab.Segments = nil
-		responseTab.Segments = append(responseTab.Segments, &widget.TextSegment{Text: bodyString, Style: widget.RichTextStyleCodeBlock})
+		responseSegment := &widget.TextSegment{Text: bodyString, Style: widget.RichTextStyleCodeBlock}
+		responseTab.Segments = append(responseTab.Segments, responseSegment)
+		fmt.Println("Master")
 		responseTab.Refresh()
 	}))
 
