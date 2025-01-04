@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -25,6 +26,14 @@ type api struct {
 	statusBinding binding.String
 	sizeBinding   binding.String
 	timeBinding   binding.String
+	queries       []queryFields
+}
+
+type queryFields struct {
+	id        int
+	checked   bool
+	parameter string
+	value     string
 }
 
 func main() {
@@ -117,8 +126,6 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 			headerMap = append(headerMap, key+"||"+values[0]) // Get the first value for simplicity
 		}
 
-		fmt.Println(response.Cookies())
-
 		a.headers.Set(headerMap)
 
 		defer response.Body.Close()
@@ -149,15 +156,32 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 	})
 
 	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, input))
+	a.queries = []queryFields{}
+	a.queries = append(a.queries, queryFields{checked: true})
+	fields := a.queryBlock()
+
+	queryContainer := container.NewPadded(
+		container.NewBorder(
+			container.NewBorder(nil, nil, widget.NewLabel("Query Parameters"), widget.NewButton("Add Parameter", func() {
+				a.queries = append(a.queries, queryFields{id: len(a.queries), checked: true})
+				fmt.Println(a.queries)
+				fields.Refresh()
+			}), nil),
+			nil,
+			nil,
+			nil,
+			fields,
+		),
+	)
 
 	tabs := container.NewAppTabs(
-		container.NewTabItem("Query", widget.NewLabel("Query Parameters here")),
+		container.NewTabItem("Query", queryContainer),
 		container.NewTabItem("Headers", widget.NewLabel("Headers here")),
 		container.NewTabItem("Auth", widget.NewLabel("Auth parameters here")),
 		container.NewTabItem("Body", widget.NewLabel("Body input here")),
 	)
 
-	return container.NewVBox(requestAction, tabs)
+	return container.NewBorder(requestAction, nil, nil, nil, tabs)
 }
 
 func (a *api) makeResponseUI() fyne.CanvasObject {
@@ -171,6 +195,8 @@ func (a *api) makeResponseUI() fyne.CanvasObject {
 
 	bodyString, _ := a.body.Get()
 	responseTab := widget.NewRichTextWithText(bodyString)
+	responseTab.Wrapping = fyne.TextWrapBreak
+	responseTab.Scroll = container.ScrollVerticalOnly
 	headerMap, _ := a.headers.Get()
 	headerTable := widget.NewTable(
 		func() (int, int) {
@@ -209,12 +235,53 @@ func (a *api) makeResponseUI() fyne.CanvasObject {
 		responseTab.Segments = nil
 		responseSegment := &widget.TextSegment{Text: bodyString, Style: widget.RichTextStyleCodeBlock}
 		responseTab.Segments = append(responseTab.Segments, responseSegment)
-		fmt.Println("Master")
 		responseTab.Refresh()
 	}))
 
 	leftBorder := canvas.NewLine(color.RGBA{R: 240, G: 240, B: 240, A: 255})
 	leftBorder.StrokeWidth = 0.7
 
-	return container.NewBorder(nil, nil, leftBorder, nil, container.NewVBox(max, tabs))
+	return container.NewBorder(nil, nil, leftBorder, nil, container.NewBorder(max, nil, nil, nil, tabs))
+}
+
+func (a *api) queryBlock() fyne.CanvasObject {
+	return widget.NewList(func() int {
+		return len(a.queries)
+	}, func() fyne.CanvasObject {
+		parameterEntry := widget.NewEntry()
+		parameterEntry.SetPlaceHolder("parameter")
+		valueEntry := widget.NewEntry()
+		valueEntry.SetPlaceHolder("value")
+
+		return container.NewBorder(nil, nil,
+			widget.NewCheck("", func(b bool) {}),
+			widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {}),
+			container.NewGridWithColumns(2, parameterEntry, valueEntry),
+		)
+	}, func(lii widget.ListItemID, co fyne.CanvasObject) {
+		ctx, _ := co.(*fyne.Container)
+		entry := ctx.Objects[1].(*widget.Check)
+		entry.SetChecked(a.queries[lii].checked)
+		entry.OnChanged = func(b bool) {
+			a.queries[lii].checked = b
+		}
+
+		if lii == 0 {
+			btn := ctx.Objects[2].(*widget.Button)
+			btn.Hide()
+		}
+
+		entryCtx, _ := ctx.Objects[0].(*fyne.Container)
+
+		parameter := entryCtx.Objects[0].(*widget.Entry)
+		parameter.SetText(a.queries[lii].parameter)
+		parameter.OnChanged = func(s string) {
+			a.queries[lii].parameter = s
+		}
+		value := entryCtx.Objects[1].(*widget.Entry)
+		value.SetText(a.queries[lii].value)
+		value.OnChanged = func(s string) {
+			a.queries[lii].value = s
+		}
+	})
 }
