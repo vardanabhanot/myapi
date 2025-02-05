@@ -1,11 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"image/color"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -27,6 +27,7 @@ type api struct {
 	sizeBinding   binding.String
 	timeBinding   binding.String
 	queries       []queryFields
+	urlinput      *widget.Entry
 }
 
 type queryFields struct {
@@ -34,6 +35,12 @@ type queryFields struct {
 	checked   bool
 	parameter string
 	value     string
+}
+
+type authOptHolder struct {
+	none   fyne.CanvasObject
+	basic  fyne.CanvasObject
+	bearer fyne.CanvasObject
 }
 
 func main() {
@@ -86,8 +93,8 @@ func (a *api) makeSideBar() fyne.CanvasObject {
 }
 
 func (a *api) makeRequestUI() fyne.CanvasObject {
-	input := widget.NewEntry()
-	input.SetPlaceHolder("Request URL")
+	a.urlinput = widget.NewEntry()
+	a.urlinput.SetPlaceHolder("Request URL")
 
 	requestType := widget.NewSelect([]string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}, func(value string) {
 		//
@@ -97,7 +104,7 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 	requestType.Resize(fyne.NewSize(10, 40))
 
 	makeRequest := widget.NewButton("Send", func() {
-		req, err := http.NewRequest(requestType.Selected, input.Text, nil)
+		req, err := http.NewRequest(requestType.Selected, a.urlinput.Text, nil)
 
 		if err != nil {
 			log.Println(err)
@@ -155,7 +162,7 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 
 	})
 
-	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, input))
+	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, a.urlinput))
 	a.queries = []queryFields{}
 	a.queries = append(a.queries, queryFields{checked: true})
 	fields := a.queryBlock()
@@ -164,7 +171,6 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 		container.NewBorder(
 			container.NewBorder(nil, nil, widget.NewLabel("Query Parameters"), widget.NewButton("Add Parameter", func() {
 				a.queries = append(a.queries, queryFields{id: len(a.queries), checked: true})
-				fmt.Println(a.queries)
 				fields.Refresh()
 			}), nil),
 			nil,
@@ -174,10 +180,86 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 		),
 	)
 
+	authOptIns := &authOptHolder{}
+
+	authOptIns.none = container.NewVBox(widget.NewLabel("No Authentication Selected"))
+
+	basicUsername := widget.NewEntry()
+	basicUsername.SetPlaceHolder("Username")
+	basicPassword := widget.NewEntry()
+	basicPassword.SetPlaceHolder("Password")
+	basicPassword.Password = true
+
+	authOptIns.basic = container.NewBorder(
+		widget.NewLabel("Basic Authentication"),
+		nil,
+		nil,
+		nil,
+		container.NewVBox(
+			container.NewBorder(nil, nil, widget.NewLabel("Username"), nil, basicUsername),
+			container.NewBorder(nil, nil, widget.NewLabel("Password"), nil, basicPassword),
+		),
+	)
+
+	bearerPrefix := widget.NewEntry()
+	bearerPrefix.SetText("Bearer")
+
+	bearerTokenArea := widget.NewEntry()
+	bearerTokenArea.MultiLine = true
+	bearerTokenArea.SetMinRowsVisible(7)
+
+	authOptIns.bearer = container.NewBorder(
+		widget.NewLabel("Bearer Authentication"),
+		nil,
+		nil,
+		nil,
+		container.NewVBox(
+			bearerTokenArea,
+			container.NewBorder(nil, nil, widget.NewLabel("Token Prefix"), nil, bearerPrefix),
+		),
+	)
+
+	authOptIns.none.Hide()
+	authOptIns.basic.Hide()
+	authOptIns.bearer.Hide()
+
+	authOptionView := container.NewStack(
+		authOptIns.none,
+		authOptIns.basic,
+		authOptIns.bearer,
+	)
+
+	authOptions := widget.NewRadioGroup([]string{"None", "Basic", "Bearer", "AWS"}, func(value string) {
+		switch value {
+		case "None":
+			authOptIns.none.Show()
+			authOptIns.basic.Hide()
+			authOptIns.bearer.Hide()
+
+		case "Basic":
+			authOptIns.basic.Show()
+			authOptIns.none.Hide()
+			authOptIns.bearer.Hide()
+
+		case "Bearer":
+			authOptIns.bearer.Show()
+			authOptIns.basic.Hide()
+			authOptIns.none.Hide()
+
+		}
+	})
+
+	authOptions.Horizontal = true
+	authOptions.SetSelected("None")
+
+	authContainer := container.NewPadded(
+		container.NewBorder(authOptions, nil, nil, nil, authOptionView),
+	)
+
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Query", queryContainer),
 		container.NewTabItem("Headers", widget.NewLabel("Headers here")),
-		container.NewTabItem("Auth", widget.NewLabel("Auth parameters here")),
+		container.NewTabItem("Auth", authContainer),
 		container.NewTabItem("Body", widget.NewLabel("Body input here")),
 	)
 
@@ -232,6 +314,7 @@ func (a *api) makeResponseUI() fyne.CanvasObject {
 
 	a.body.AddListener(binding.NewDataListener(func() {
 		bodyString, _ = a.body.Get()
+
 		responseTab.Segments = nil
 		responseSegment := &widget.TextSegment{Text: bodyString, Style: widget.RichTextStyleCodeBlock}
 		responseTab.Segments = append(responseTab.Segments, responseSegment)
@@ -277,11 +360,52 @@ func (a *api) queryBlock() fyne.CanvasObject {
 		parameter.SetText(a.queries[lii].parameter)
 		parameter.OnChanged = func(s string) {
 			a.queries[lii].parameter = s
+
+			params := url.Values{}
+
+			for _, q := range a.queries {
+				if q.checked {
+					params.Add(q.parameter, "")
+				}
+			}
+
+			if a.urlinput.Text == "" {
+				return
+			}
+
+			parsedURL, err := url.Parse(a.urlinput.Text)
+
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			a.urlinput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path + "?" + params.Encode())
 		}
 		value := entryCtx.Objects[1].(*widget.Entry)
 		value.SetText(a.queries[lii].value)
 		value.OnChanged = func(s string) {
 			a.queries[lii].value = s
+
+			params := url.Values{}
+
+			for _, q := range a.queries {
+				if q.checked {
+					params.Add(q.parameter, q.value)
+				}
+			}
+
+			if a.urlinput.Text == "" {
+				return
+			}
+
+			parsedURL, err := url.Parse(a.urlinput.Text)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			a.urlinput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path + "?" + params.Encode())
+
 		}
 	})
 }
