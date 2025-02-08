@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"io"
 	"log"
@@ -17,6 +18,11 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
+
+type tabs struct {
+	tab []fyne.URI
+	api map[fyne.URI]api
+}
 
 type api struct {
 	response      *http.Response
@@ -49,50 +55,28 @@ func main() {
 
 	w.Resize(fyne.NewSize(1024, 600))
 	w.CenterOnScreen()
-	api := &api{}
-	w.SetContent(api.makeGUI())
+	w.SetContent(makeGUI())
 	w.ShowAndRun()
 }
 
-func (a *api) makeGUI() fyne.CanvasObject {
+func makeGUI() fyne.CanvasObject {
 
-	size := "Size : "
-	status := "Status : "
-	time := "Time : "
-	bodyResponse := "No response yet"
-	a.statusBinding = binding.BindString(&status)
-	a.sizeBinding = binding.BindString(&size)
-	a.timeBinding = binding.BindString(&time)
-	a.body = binding.BindString(&bodyResponse)
-	a.headers = binding.NewStringList()
+	tabItem := makeTab()
+	tabs := container.NewDocTabs(
+		tabItem,
+	)
 
-	sidebar := a.makeSideBar()
+	sidebar := makeSideBar(tabs)
+	content := []fyne.CanvasObject{sidebar, tabs}
+
+	return container.New(newBaseLayout(sidebar, tabs), content...)
+}
+
+func makeTab() *container.TabItem {
+
+	a := &api{}
 	request := a.makeRequestUI()
 	response := a.makeResponseUI()
-
-	content := []fyne.CanvasObject{sidebar, request, response}
-
-	return container.New(newBaseLayout(sidebar, request, response), content...)
-}
-
-func (a *api) makeSideBar() fyne.CanvasObject {
-
-	requestButton := container.NewPadded(widget.NewButton("New Request", func() {
-		//
-	}))
-
-	rightBorder := canvas.NewLine(color.RGBA{R: 240, G: 240, B: 240, A: 255})
-	rightBorder.StrokeWidth = 0.7
-
-	return container.NewBorder(
-		nil,
-		nil,
-		nil,
-		rightBorder,
-		container.NewVBox(requestButton))
-}
-
-func (a *api) makeRequestUI() fyne.CanvasObject {
 	a.urlinput = widget.NewEntry()
 	a.urlinput.SetPlaceHolder("Request URL")
 
@@ -150,19 +134,54 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 			statusValue = a.response.Status
 		}
 
-		status := "Status: " + statusValue
+		status := statusValue
 
 		a.statusBinding.Set(status)
 
-		size := "Size :"
+		size := fmt.Sprint(len(body))
 		a.sizeBinding.Set(size)
 
-		time := "Time: " + a.duration.String()
+		time := a.duration.String()
 		a.timeBinding.Set(time)
 
 	})
 
 	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, a.urlinput))
+
+	tabItem := container.NewTabItem("New Request*", container.NewBorder(requestAction, nil, nil, nil, container.NewGridWithColumns(2, request, response)))
+
+	return tabItem
+}
+
+func makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
+
+	requestButton := container.NewPadded(widget.NewButton("New Request", func() {
+		newTab := makeTab()
+		tabs.Append(newTab)
+		tabs.Select(newTab)
+	}))
+
+	rightBorder := canvas.NewLine(color.RGBA{R: 240, G: 240, B: 240, A: 255})
+	rightBorder.StrokeWidth = 0.7
+
+	return container.NewBorder(
+		nil,
+		nil,
+		nil,
+		rightBorder,
+		container.NewVBox(requestButton))
+}
+
+func (a *api) makeRequestUI() fyne.CanvasObject {
+
+	var status, size, time string
+	bodyResponse := "No response yet"
+	a.statusBinding = binding.BindString(&status)
+	a.sizeBinding = binding.BindString(&size)
+	a.timeBinding = binding.BindString(&time)
+	a.body = binding.BindString(&bodyResponse)
+	a.headers = binding.NewStringList()
+
 	a.queries = []queryFields{}
 	a.queries = append(a.queries, queryFields{checked: true})
 	fields := a.queryBlock()
@@ -203,6 +222,7 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 
 	bearerPrefix := widget.NewEntry()
 	bearerPrefix.SetText("Bearer")
+	bearerPrefix.TextStyle.Bold = true
 
 	bearerTokenArea := widget.NewEntry()
 	bearerTokenArea.MultiLine = true
@@ -263,7 +283,7 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 		container.NewTabItem("Body", widget.NewLabel("Body input here")),
 	)
 
-	return container.NewBorder(requestAction, nil, nil, nil, tabs)
+	return container.NewBorder(nil, nil, nil, nil, tabs)
 }
 
 func (a *api) makeResponseUI() fyne.CanvasObject {

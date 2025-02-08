@@ -5,11 +5,11 @@ import (
 )
 
 type baseLayout struct {
-	left, center, right fyne.CanvasObject
+	left, center fyne.CanvasObject
 }
 
-func newBaseLayout(left, center, right fyne.CanvasObject) fyne.Layout {
-	return &baseLayout{left: left, center: center, right: right}
+func newBaseLayout(left, center fyne.CanvasObject) fyne.Layout {
+	return &baseLayout{left: left, center: center}
 }
 
 func (l *baseLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
@@ -22,13 +22,8 @@ func (l *baseLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	remainingWidth := size.Width - leftWidth
 
 	// The remaining width is split equally for center and right sections
-	centerWidth := remainingWidth * 0.55
 	l.center.Move(fyne.NewPos(leftWidth, 0))
-	l.center.Resize(fyne.NewSize(centerWidth, size.Height))
-
-	rightWidth := remainingWidth * 0.45
-	l.right.Move(fyne.NewPos(leftWidth+centerWidth, 0))
-	l.right.Resize(fyne.NewSize(rightWidth, size.Height))
+	l.center.Resize(fyne.NewSize(remainingWidth, size.Height))
 }
 
 func (l *baseLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
