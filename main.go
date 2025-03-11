@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,16 +21,14 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
-type tabs struct {
-	tab []fyne.URI
-	api map[fyne.URI]api
-}
-
 type api struct {
+	id            string
 	response      *http.Response
 	duration      time.Duration
 	headers       binding.StringList
@@ -33,7 +37,22 @@ type api struct {
 	sizeBinding   binding.String
 	timeBinding   binding.String
 	queries       []queryFields
+	headersF      []headerFields
+	bodyF         *bodyFields
 	urlinput      *widget.Entry
+	requestType   *widget.Select
+}
+
+type headerFields struct {
+	ID        int    `json:"id"`
+	Checked   bool   `json:"checked"`
+	Parameter string `json:"parameters"`
+	Value     string `json:"values"`
+}
+
+type bodyFields struct {
+	content_type string
+	content      string
 }
 
 type queryFields struct {
@@ -49,14 +68,33 @@ type authOptHolder struct {
 	bearer fyne.CanvasObject
 }
 
+type bodyOptHolder struct {
+	json fyne.CanvasObject
+	xml  fyne.CanvasObject
+	text fyne.CanvasObject
+}
+
+type savedRequest struct {
+	ID          string         `json:"id"`
+	Method      string         `json:"method"`
+	RequestURL  string         `json:"requestURL"`
+	QueryParams []queryFields  `json:"queryParams"`
+	Headers     []headerFields `json:"headers"`
+	Body        *bodyFields    `json:"body"`
+}
+
+const VERSION = "0.0.1"
+
+var window fyne.Window
+
 func main() {
 	a := app.New()
-	w := a.NewWindow("MyAPI")
+	window = a.NewWindow("MyAPI")
 
-	w.Resize(fyne.NewSize(1024, 600))
-	w.CenterOnScreen()
-	w.SetContent(makeGUI())
-	w.ShowAndRun()
+	window.Resize(fyne.NewSize(1024, 600))
+	window.CenterOnScreen()
+	window.SetContent(makeGUI())
+	window.ShowAndRun()
 }
 
 func makeGUI() fyne.CanvasObject {
@@ -65,6 +103,8 @@ func makeGUI() fyne.CanvasObject {
 	tabs := container.NewDocTabs(
 		tabItem,
 	)
+
+	fmt.Println(tabs)
 
 	sidebar := makeSideBar(tabs)
 	content := []fyne.CanvasObject{sidebar, tabs}
@@ -80,25 +120,54 @@ func makeTab() *container.TabItem {
 	a.urlinput = widget.NewEntry()
 	a.urlinput.SetPlaceHolder("Request URL")
 
-	requestType := widget.NewSelect([]string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}, func(value string) {
+	a.requestType = widget.NewSelect([]string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}, func(value string) {
 		//
 	})
 
-	requestType.SetSelected("GET")
-	requestType.Resize(fyne.NewSize(10, 40))
+	a.requestType.SetSelected("GET")
+	a.requestType.Resize(fyne.NewSize(10, 40))
 
 	makeRequest := widget.NewButton("Send", func() {
-		req, err := http.NewRequest(requestType.Selected, a.urlinput.Text, nil)
+		req, err := http.NewRequest(a.requestType.Selected, a.urlinput.Text, nil)
+
+		a.saveRequestData()
 
 		if err != nil {
 			log.Println(err)
 			return
 		}
 
+		for _, header := range a.headersF {
+			if !header.Checked || header.Parameter == "" || header.Value == "" {
+				continue
+			}
+
+			req.Header.Set(header.Parameter, header.Value)
+		}
+
+		if a.bodyF.content != "" {
+			switch a.bodyF.content_type {
+			case "JSON":
+				req.Header.Set("Content-Type", "application/json")
+
+			case "XML":
+				req.Header.Set("Content-Type", "application/xml")
+
+			case "Text":
+				req.Header.Set("Content-Type", "text/plain")
+
+			}
+
+			fmt.Println(a.bodyF.content)
+			fmt.Println(a.bodyF.content_type)
+
+			req.Body = io.NopCloser(bytes.NewBuffer([]byte(a.bodyF.content)))
+		}
+
 		client := &http.Client{}
 
 		startTime := time.Now()
-		response, err := client.Do(req)
+		a.response, err = client.Do(req)
 
 		if err != nil {
 			log.Println(err)
@@ -106,22 +175,19 @@ func makeTab() *container.TabItem {
 		}
 
 		endTime := time.Now()
-		duration := endTime.Sub(startTime)
-
-		a.duration = duration
-		a.response = response
+		a.duration = endTime.Sub(startTime)
 
 		// Convert response headers to a bindable map
 		headerMap := []string{}
-		for key, values := range response.Header {
+		for key, values := range a.response.Header {
 			headerMap = append(headerMap, key+"||"+values[0]) // Get the first value for simplicity
 		}
 
 		a.headers.Set(headerMap)
 
-		defer response.Body.Close()
+		defer a.response.Body.Close()
 
-		body, err := io.ReadAll(response.Body)
+		body, err := io.ReadAll(a.response.Body)
 		if err != nil {
 			log.Println("Error reading response body:", err)
 			return
@@ -146,7 +212,7 @@ func makeTab() *container.TabItem {
 
 	})
 
-	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, a.urlinput))
+	requestAction := container.NewPadded(container.NewBorder(nil, nil, a.requestType, makeRequest, a.urlinput))
 
 	tabItem := container.NewTabItem("New Request*", container.NewBorder(requestAction, nil, nil, nil, container.NewGridWithColumns(2, request, response)))
 
@@ -161,6 +227,58 @@ func makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
 		tabs.Select(newTab)
 	}))
 
+	requestHistory := listHistory()
+
+	requestList := widget.NewList(
+		func() int {
+			return len(*requestHistory)
+		},
+		func() fyne.CanvasObject {
+
+			bg := canvas.NewRectangle(color.RGBA{72, 180, 97, 255})
+			bg.SetMinSize(fyne.NewSize(40, 15)) // Adjust size as needed
+			bg.CornerRadius = 6
+
+			// Text label
+			label := canvas.NewText("GET", color.White)
+			label.Alignment = fyne.TextAlignCenter
+			label.TextStyle.Bold = true
+			label.TextSize = 10
+
+			badge := container.NewCenter(bg, container.NewPadded(label))
+			url := widget.NewLabel("https://myapi.io/")
+			url.Truncation = fyne.TextTruncateEllipsis
+
+			timeElapsed := canvas.NewText("1 day ago", color.Black)
+			timeElapsed.TextSize = 10
+			timeElapsed.TextStyle.Italic = true
+
+			return container.NewPadded(
+				container.NewGridWithRows(2,
+					container.NewBorder(nil, nil, badge, nil, url),
+					container.NewBorder(nil, nil, timeElapsed, widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+						fmt.Println("Deleting it")
+					})),
+				))
+		},
+		func(i widget.ListItemID, o fyne.CanvasObject) {
+			paddedC, _ := o.(*fyne.Container)
+			grid, _ := paddedC.Objects[0].(*fyne.Container)
+
+			firstRow, _ := grid.Objects[0].(*fyne.Container)
+			//fmt.Println(firstRow.Objects)
+			badge, _ := firstRow.Objects[1].(*fyne.Container)
+			badge.Objects[1].(*fyne.Container).Objects[0].(*canvas.Text).Text = (*requestHistory)[i]["method"]
+			badge.Objects[0].(*canvas.Rectangle).FillColor = methodColor((*requestHistory)[i]["method"])
+			firstRow.Objects[0].(*widget.Label).SetText((*requestHistory)[i]["requestURL"])
+
+		},
+	)
+
+	requestList.OnSelected = func(id widget.ListItemID) {
+		fmt.Println(id)
+	}
+
 	rightBorder := canvas.NewLine(color.RGBA{R: 240, G: 240, B: 240, A: 255})
 	rightBorder.StrokeWidth = 0.7
 
@@ -169,7 +287,7 @@ func makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
 		nil,
 		nil,
 		rightBorder,
-		container.NewVBox(requestButton))
+		container.NewBorder(requestButton, nil, nil, nil, requestList))
 }
 
 func (a *api) makeRequestUI() fyne.CanvasObject {
@@ -182,6 +300,7 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 	a.body = binding.BindString(&bodyResponse)
 	a.headers = binding.NewStringList()
 
+	// Query options
 	a.queries = []queryFields{}
 	a.queries = append(a.queries, queryFields{checked: true})
 	fields := a.queryBlock()
@@ -199,8 +318,29 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 		),
 	)
 
-	authOptIns := &authOptHolder{}
+	// Header Options
+	a.headersF = []headerFields{}
+	a.headersF = append(a.headersF, headerFields{Parameter: "Accept", Value: "*/*", Checked: true})
+	a.headersF = append(a.headersF, headerFields{Parameter: "User-Agent", Value: "MyAPI/" + VERSION, Checked: true})
+	a.headersF = append(a.headersF, headerFields{Parameter: "Accept-Encoding", Value: "gzip, deflate, br", Checked: true})
+	a.headersF = append(a.headersF, headerFields{Parameter: "Connection", Value: "keep-alive", Checked: true})
+	headerFieldss := a.headerBlock()
 
+	headerContainer := container.NewPadded(
+		container.NewBorder(
+			container.NewBorder(nil, nil, widget.NewLabel("Request Headers"), widget.NewButton("Add Header", func() {
+				a.headersF = append(a.headersF, headerFields{ID: len(a.headersF), Checked: true})
+				headerFieldss.Refresh()
+			}), nil),
+			nil,
+			nil,
+			nil,
+			headerFieldss,
+		),
+	)
+
+	// Auth Options
+	authOptIns := &authOptHolder{}
 	authOptIns.none = container.NewVBox(widget.NewLabel("No Authentication Selected"))
 
 	basicUsername := widget.NewEntry()
@@ -208,9 +348,11 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 	basicPassword := widget.NewEntry()
 	basicPassword.SetPlaceHolder("Password")
 	basicPassword.Password = true
+	basicHeading := widget.NewLabel("Basic Authentication")
+	basicHeading.TextStyle.Bold = true
 
 	authOptIns.basic = container.NewBorder(
-		widget.NewLabel("Basic Authentication"),
+		basicHeading,
 		nil,
 		nil,
 		nil,
@@ -222,14 +364,15 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 
 	bearerPrefix := widget.NewEntry()
 	bearerPrefix.SetText("Bearer")
-	bearerPrefix.TextStyle.Bold = true
 
+	bearerHeading := widget.NewLabel("Bearer Authentication")
+	bearerHeading.TextStyle.Bold = true
 	bearerTokenArea := widget.NewEntry()
 	bearerTokenArea.MultiLine = true
 	bearerTokenArea.SetMinRowsVisible(7)
 
 	authOptIns.bearer = container.NewBorder(
-		widget.NewLabel("Bearer Authentication"),
+		bearerHeading,
 		nil,
 		nil,
 		nil,
@@ -276,11 +419,113 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 		container.NewBorder(authOptions, nil, nil, nil, authOptionView),
 	)
 
+	// Body Options
+	bodyOptIns := &bodyOptHolder{}
+	a.bodyF = &bodyFields{content_type: "JSON"}
+
+	jsonHeading := widget.NewLabel("JSON")
+	jsonHeading.TextStyle.Bold = true
+	jsonTextArea := widget.NewEntry()
+	jsonTextArea.MultiLine = true
+	jsonTextArea.SetMinRowsVisible(7)
+	jsonTextArea.TextStyle.Monospace = true
+	jsonTextArea.OnChanged = func(s string) {
+		a.bodyF.content = s
+	}
+
+	bodyOptIns.json = container.NewBorder(
+		jsonHeading,
+		nil,
+		nil,
+		nil,
+		jsonTextArea,
+	)
+
+	xmlHeading := widget.NewLabel("XML")
+	xmlHeading.TextStyle.Bold = true
+	xmlTextArea := widget.NewEntry()
+	xmlTextArea.MultiLine = true
+	xmlTextArea.SetMinRowsVisible(7)
+	xmlTextArea.TextStyle.Monospace = true
+	xmlTextArea.OnChanged = func(s string) {
+		a.bodyF.content = s
+	}
+
+	bodyOptIns.xml = container.NewBorder(
+		xmlHeading,
+		nil,
+		nil,
+		nil,
+		xmlTextArea,
+	)
+
+	textHeading := widget.NewLabel("Text")
+	textHeading.TextStyle.Bold = true
+	textTextArea := widget.NewEntry()
+	textTextArea.OnChanged = func(s string) {
+		a.bodyF.content = s
+	}
+	textTextArea.MultiLine = true
+	textTextArea.SetMinRowsVisible(7)
+	textTextArea.TextStyle.Monospace = true
+
+	bodyOptIns.text = container.NewBorder(
+		textHeading,
+		nil,
+		nil,
+		nil,
+		textTextArea,
+	)
+
+	bodyOptions := widget.NewRadioGroup([]string{"JSON", "Form", "XML", "Text"}, func(value string) {
+		switch value {
+		case "JSON":
+			bodyOptIns.json.Show()
+			bodyOptIns.xml.Hide()
+			bodyOptIns.text.Hide()
+
+		case "Form":
+			bodyOptIns.json.Hide()
+			bodyOptIns.xml.Hide()
+			bodyOptIns.text.Hide()
+
+		case "XML":
+			bodyOptIns.xml.Show()
+			bodyOptIns.json.Hide()
+			bodyOptIns.text.Hide()
+
+		case "Text":
+			bodyOptIns.text.Show()
+			bodyOptIns.json.Hide()
+			bodyOptIns.xml.Hide()
+		}
+
+		a.bodyF.content_type = value // Settings the value to use it when submitting the request
+	})
+
+	bodyOptions.Horizontal = true
+	bodyOptions.SetSelected("JSON")
+
+	bodyOptIns.json.Show()
+	//bodyOptIns.form.Hide() // TODO:: Need to implement forms, am lazy to do it now as it will need key value inputs
+	bodyOptIns.xml.Hide()
+	bodyOptIns.text.Hide()
+
+	bodyOptionView := container.NewStack(
+		bodyOptIns.json,
+		bodyOptIns.xml,
+		bodyOptIns.text,
+	)
+
+	bodyContainer := container.NewPadded(
+		container.NewBorder(bodyOptions, nil, nil, nil, bodyOptionView),
+	)
+
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Query", queryContainer),
-		container.NewTabItem("Headers", widget.NewLabel("Headers here")),
+		container.NewTabItem("Headers", headerContainer),
 		container.NewTabItem("Auth", authContainer),
-		container.NewTabItem("Body", widget.NewLabel("Body input here")),
+		container.NewTabItem("Body", bodyContainer),
 	)
 
 	return container.NewBorder(nil, nil, nil, nil, tabs)
@@ -348,7 +593,9 @@ func (a *api) makeResponseUI() fyne.CanvasObject {
 }
 
 func (a *api) queryBlock() fyne.CanvasObject {
-	return widget.NewList(func() int {
+
+	var list *widget.List
+	list = widget.NewList(func() int {
 		return len(a.queries)
 	}, func() fyne.CanvasObject {
 		parameterEntry := widget.NewEntry()
@@ -363,6 +610,10 @@ func (a *api) queryBlock() fyne.CanvasObject {
 		)
 	}, func(lii widget.ListItemID, co fyne.CanvasObject) {
 		ctx, _ := co.(*fyne.Container)
+		if len(ctx.Objects) == 0 {
+			return
+		}
+
 		entry := ctx.Objects[1].(*widget.Check)
 		entry.SetChecked(a.queries[lii].checked)
 		entry.OnChanged = func(b bool) {
@@ -372,6 +623,13 @@ func (a *api) queryBlock() fyne.CanvasObject {
 		if lii == 0 {
 			btn := ctx.Objects[2].(*widget.Button)
 			btn.Hide()
+		}
+
+		btn := ctx.Objects[2].(*widget.Button)
+		btn.OnTapped = func() {
+			a.queries = append(a.queries[:lii], a.queries[lii+1:]...)
+			list.Refresh()
+			a.urlinput.Refresh()
 		}
 
 		entryCtx, _ := ctx.Objects[0].(*fyne.Container)
@@ -425,7 +683,204 @@ func (a *api) queryBlock() fyne.CanvasObject {
 			}
 
 			a.urlinput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path + "?" + params.Encode())
+		}
+	})
+
+	return list
+}
+
+func (a *api) headerBlock() fyne.CanvasObject {
+
+	var list *widget.List
+	list = widget.NewList(func() int {
+		return len(a.headersF)
+	}, func() fyne.CanvasObject {
+		parameterEntry := widget.NewEntry()
+		parameterEntry.SetPlaceHolder("Header")
+		valueEntry := widget.NewEntry()
+		valueEntry.SetPlaceHolder("value")
+
+		return container.NewBorder(nil, nil,
+			widget.NewCheck("", func(b bool) {}),
+			widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {}),
+			container.NewGridWithColumns(2, parameterEntry, valueEntry),
+		)
+	}, func(lii widget.ListItemID, co fyne.CanvasObject) {
+		ctx, _ := co.(*fyne.Container)
+		entry := ctx.Objects[1].(*widget.Check)
+		entry.SetChecked(a.headersF[lii].Checked)
+		entry.OnChanged = func(b bool) {
+			a.headersF[lii].Checked = b
+		}
+
+		btn := ctx.Objects[2].(*widget.Button)
+		btn.OnTapped = func() {
+			a.headersF = append(a.headersF[:lii], a.headersF[lii+1:]...)
+			list.Refresh()
+		}
+
+		entryCtx, _ := ctx.Objects[0].(*fyne.Container)
+
+		parameter := entryCtx.Objects[0].(*widget.Entry)
+		parameter.SetText(a.headersF[lii].Parameter)
+		parameter.OnChanged = func(s string) {
+			a.headersF[lii].Parameter = s
+		}
+
+		value := entryCtx.Objects[1].(*widget.Entry)
+		value.SetText(a.headersF[lii].Value)
+		value.OnChanged = func(s string) {
+			a.headersF[lii].Value = s
 
 		}
 	})
+
+	return list
+}
+
+func (a *api) saveRequestData() {
+	localDir, err := os.UserCacheDir()
+
+	if err != nil {
+		dialog.ShowError(err, window)
+		return
+	}
+
+	myapiPath := filepath.Join(localDir, "/myapi")
+
+	_, err = os.Stat(myapiPath)
+
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			err = os.Mkdir(myapiPath, os.ModeDir)
+		}
+
+		// If we still have an error, we need to let the user know
+		if err != nil {
+			dialog.ShowError(err, window)
+			return
+		}
+	}
+
+	var filename string
+	if a.id == "" {
+		filename = fmt.Sprintf("%d", time.Now().Unix())
+		a.id = filename
+	} else {
+		filename = a.id
+	}
+
+	requestFile := filepath.Join(myapiPath, "/"+filename+".json")
+
+	uri := storage.NewFileURI(requestFile)
+
+	writer, _ := storage.Writer(uri)
+	defer writer.Close()
+
+	data := &savedRequest{
+		ID:          a.id,
+		Method:      a.requestType.Selected,
+		RequestURL:  a.urlinput.Text,
+		QueryParams: a.queries,
+		Headers:     a.headersF,
+		Body:        a.bodyF,
+	}
+
+	jsondata, err := json.Marshal(data)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	writer.Write(jsondata)
+
+}
+
+func listHistory() *[]map[string]string {
+	localDir, err := os.UserCacheDir()
+
+	var requests []map[string]string
+
+	if err != nil {
+		return &requests
+	}
+
+	myapiPath := filepath.Join(localDir, "/myapi")
+
+	_, err = os.Stat(myapiPath)
+
+	if err != nil {
+		return &requests
+	}
+
+	uri := storage.NewFileURI(myapiPath)
+
+	files, err := storage.List(uri)
+
+	if err != nil {
+		return &requests
+	}
+
+	for _, file := range files {
+		if _, err := storage.CanRead(file); err != nil {
+			return &requests
+		}
+
+		reader, _ := storage.Reader(file)
+
+		defer reader.Close()
+
+		var fileContent []byte
+		fileContent, err = io.ReadAll(reader)
+
+		if err != nil {
+			continue
+		}
+
+		content := &savedRequest{}
+		if err = json.Unmarshal(fileContent, content); err != nil {
+			continue
+		}
+
+		var request = make(map[string]string)
+
+		request["ID"] = content.ID
+		request["requestURL"] = content.RequestURL
+		request["method"] = content.Method
+		requests = append(requests, request)
+	}
+
+	return &requests
+}
+
+func methodColor(method string) *color.RGBA {
+	switch method {
+	case "POST":
+		return &color.RGBA{219, 114, 180, 255}
+
+	case "PUT":
+		return &color.RGBA{228, 155, 15, 255}
+
+	case "PATCH":
+		return &color.RGBA{142, 91, 185, 255}
+
+	case "DELETE":
+		return &color.RGBA{216, 90, 121, 255}
+
+	case "OPTIONS":
+		return &color.RGBA{181, 234, 215, 255}
+
+	case "HEAD":
+		return &color.RGBA{122, 84, 189, 255}
+
+	case "CONNECT":
+		return &color.RGBA{175, 203, 255, 255}
+
+	case "TRACE":
+		return &color.RGBA{248, 216, 168, 255}
+
+	default:
+		return &color.RGBA{72, 180, 97, 255}
+	}
 }
