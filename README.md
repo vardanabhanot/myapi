@@ -1,5 +1,6 @@
 ﻿<img src="/myapi-logo.png" alt="myAPI logo" title="myAPI" align="left" height="60px"/>
-<br/>
+<br>
+
 # myAPI
 
 myAPI is a simple API testing tool, made in Go using Fyne Toolkit
