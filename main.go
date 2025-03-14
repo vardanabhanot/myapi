@@ -104,12 +104,11 @@ func makeGUI() fyne.CanvasObject {
 		tabItem,
 	)
 
-	fmt.Println(tabs)
-
 	sidebar := makeSideBar(tabs)
-	content := []fyne.CanvasObject{sidebar, tabs}
+	baseView := container.NewHSplit(sidebar, tabs)
+	baseView.Offset = 0.22
 
-	return container.New(newBaseLayout(sidebar, tabs), content...)
+	return container.NewBorder(nil, container.NewHBox(widget.NewLabel("About")), nil, nil, baseView)
 }
 
 func makeTab() *container.TabItem {
@@ -129,8 +128,6 @@ func makeTab() *container.TabItem {
 
 	makeRequest := widget.NewButton("Send", func() {
 		req, err := http.NewRequest(a.requestType.Selected, a.urlinput.Text, nil)
-
-		a.saveRequestData()
 
 		if err != nil {
 			log.Println(err)
@@ -157,9 +154,6 @@ func makeTab() *container.TabItem {
 				req.Header.Set("Content-Type", "text/plain")
 
 			}
-
-			fmt.Println(a.bodyF.content)
-			fmt.Println(a.bodyF.content_type)
 
 			req.Body = io.NopCloser(bytes.NewBuffer([]byte(a.bodyF.content)))
 		}
@@ -210,11 +204,14 @@ func makeTab() *container.TabItem {
 		time := a.duration.String()
 		a.timeBinding.Set(time)
 
+		a.saveRequestData()
+
 	})
 
 	requestAction := container.NewPadded(container.NewBorder(nil, nil, a.requestType, makeRequest, a.urlinput))
-
-	tabItem := container.NewTabItem("New Request*", container.NewBorder(requestAction, nil, nil, nil, container.NewGridWithColumns(2, request, response)))
+	requestResponseContainer := container.NewVSplit(request, response)
+	requestResponseContainer.Offset = 0.7
+	tabItem := container.NewTabItem("New Request*", container.NewBorder(requestAction, nil, nil, nil, requestResponseContainer))
 
 	return tabItem
 }
@@ -229,7 +226,9 @@ func makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
 
 	requestHistory := listHistory()
 
-	requestList := widget.NewList(
+	var requestList *widget.List
+
+	requestList = widget.NewList(
 		func() int {
 			return len(*requestHistory)
 		},
@@ -249,16 +248,14 @@ func makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
 			url := widget.NewLabel("https://myapi.io/")
 			url.Truncation = fyne.TextTruncateEllipsis
 
-			timeElapsed := canvas.NewText("1 day ago", color.Black)
+			timeElapsed := canvas.NewText("1 day ago", theme.Color(theme.ColorNameForeground))
 			timeElapsed.TextSize = 10
 			timeElapsed.TextStyle.Italic = true
 
 			return container.NewPadded(
 				container.NewGridWithRows(2,
 					container.NewBorder(nil, nil, badge, nil, url),
-					container.NewBorder(nil, nil, timeElapsed, widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
-						fmt.Println("Deleting it")
-					})),
+					container.NewBorder(nil, nil, timeElapsed, widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {})),
 				))
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
@@ -266,12 +263,22 @@ func makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
 			grid, _ := paddedC.Objects[0].(*fyne.Container)
 
 			firstRow, _ := grid.Objects[0].(*fyne.Container)
-			//fmt.Println(firstRow.Objects)
 			badge, _ := firstRow.Objects[1].(*fyne.Container)
 			badge.Objects[1].(*fyne.Container).Objects[0].(*canvas.Text).Text = (*requestHistory)[i]["method"]
+			grid.Objects[1].(*fyne.Container).Objects[1].(*widget.Button).OnTapped = func() {
+				fmt.Println((*requestHistory)[i]["ID"])
+				fileURI := storage.NewFileURI((*requestHistory)[i]["ID"])
+				err := storage.Delete(fileURI)
+
+				if err != nil {
+					fmt.Println(err)
+				}
+
+				(*requestHistory) = append((*requestHistory)[:i], (*requestHistory)[i+1:]...)
+				requestList.Refresh()
+			}
 			badge.Objects[0].(*canvas.Rectangle).FillColor = methodColor((*requestHistory)[i]["method"])
 			firstRow.Objects[0].(*widget.Label).SetText((*requestHistory)[i]["requestURL"])
-
 		},
 	)
 
@@ -279,7 +286,7 @@ func makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
 		fmt.Println(id)
 	}
 
-	rightBorder := canvas.NewLine(color.RGBA{R: 240, G: 240, B: 240, A: 255})
+	rightBorder := canvas.NewLine(theme.Color(theme.ColorNameSeparator))
 	rightBorder.StrokeWidth = 0.7
 
 	return container.NewBorder(
@@ -533,12 +540,12 @@ func (a *api) makeRequestUI() fyne.CanvasObject {
 
 func (a *api) makeResponseUI() fyne.CanvasObject {
 
-	max := container.NewPadded(container.NewAdaptiveGrid(
-		3,
-		widget.NewLabelWithData(a.statusBinding),
-		widget.NewLabelWithData(a.sizeBinding),
-		widget.NewLabelWithData(a.timeBinding),
-	))
+	// max := container.NewPadded(container.NewAdaptiveGrid(
+	// 	3,
+	// 	widget.NewLabelWithData(a.statusBinding),
+	// 	widget.NewLabelWithData(a.sizeBinding),
+	// 	widget.NewLabelWithData(a.timeBinding),
+	// ))
 
 	bodyString, _ := a.body.Get()
 	responseTab := widget.NewRichTextWithText(bodyString)
@@ -586,10 +593,7 @@ func (a *api) makeResponseUI() fyne.CanvasObject {
 		responseTab.Refresh()
 	}))
 
-	leftBorder := canvas.NewLine(color.RGBA{R: 240, G: 240, B: 240, A: 255})
-	leftBorder.StrokeWidth = 0.7
-
-	return container.NewBorder(nil, nil, leftBorder, nil, container.NewBorder(max, nil, nil, nil, tabs))
+	return container.NewBorder(nil, nil, nil, nil, container.NewBorder(nil, nil, nil, nil, tabs))
 }
 
 func (a *api) queryBlock() fyne.CanvasObject {
@@ -845,7 +849,7 @@ func listHistory() *[]map[string]string {
 
 		var request = make(map[string]string)
 
-		request["ID"] = content.ID
+		request["ID"] = file.String()
 		request["requestURL"] = content.RequestURL
 		request["method"] = content.Method
 		requests = append(requests, request)

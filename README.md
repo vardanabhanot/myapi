@@ -1,5 +1,12 @@
-﻿# MYAPI
+﻿<img src="/myapi-logo.png" alt="myAPI logo" title="myAPI" align="left" height="60px"/>
 
-MYAPI is a API testing tool, made to be lite and fast, its still in development so not ready to be used, still you can try the exe on windows.
+# myAPI
 
+myAPI is a simple API testing tool, made in Go using Fyne Toolkit
+
+> [!NOTE]
+> This project is still in early development but you can still try it out
+> 
+
+## Screenshots
 ![my-api-dev-state.png](https://github.com/vardanabhanot/myapi/blob/main/my-api-dev-state.png)
