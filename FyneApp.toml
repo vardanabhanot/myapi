@@ -1,7 +1,7 @@
 Website = "https://themyapi.com"
 
 [Details]
-Icon = "Icon.png"
+Icon = "Icon.PNG"
 Name = "myAPI"
 ID = "com.themyapi"
 Version = "0.0.0"

@@ -548,9 +548,11 @@ func (a *api) makeResponseUI() fyne.CanvasObject {
 	// ))
 
 	bodyString, _ := a.body.Get()
-	responseTab := widget.NewRichTextWithText(bodyString)
-	responseTab.Wrapping = fyne.TextWrapBreak
-	responseTab.Scroll = container.ScrollVerticalOnly
+	responseTab := widget.NewTextGridFromString(bodyString)
+	responseTab.Scroll = fyne.ScrollBoth
+	responseTab.ShowLineNumbers = true
+	responseTab.ShowWhitespace = true
+
 	headerMap, _ := a.headers.Get()
 	headerTable := widget.NewTable(
 		func() (int, int) {
@@ -585,12 +587,12 @@ func (a *api) makeResponseUI() fyne.CanvasObject {
 	}))
 
 	a.body.AddListener(binding.NewDataListener(func() {
-		bodyString, _ = a.body.Get()
+		bodyString, _ := a.body.Get()
 
-		responseTab.Segments = nil
-		responseSegment := &widget.TextSegment{Text: bodyString, Style: widget.RichTextStyleCodeBlock}
-		responseTab.Segments = append(responseTab.Segments, responseSegment)
-		responseTab.Refresh()
+		if len(bodyString) > 200 {
+			responseTab.SetText(bodyString)
+			//responseTab.Refresh()
+		}
 	}))
 
 	return container.NewBorder(nil, nil, nil, nil, container.NewBorder(nil, nil, nil, nil, tabs))
