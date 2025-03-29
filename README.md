@@ -1,4 +1,4 @@
-﻿<img src="/myapi-logo.png" alt="myAPI logo" title="myAPI" align="left" height="60px"/>
+﻿<img src="/myapi-logo-light.png" alt="myAPI logo" title="myAPI" align="left" height="60px"/>
 <br>
 
 # myAPI
