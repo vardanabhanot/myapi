@@ -18,6 +18,7 @@ type Request struct {
 	BodyType    string      `json:"BodyType"`
 	Body        string      `json:"Body"`
 	AuthType    string      `json:"AuthType"`
+	MTime       string      `json:"-"`
 }
 
 type FormType struct {

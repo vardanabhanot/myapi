@@ -7,6 +7,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
+	"github.com/vardanabhanot/myapi/core"
 )
 
 func (g *gui) makeResponseUI() fyne.CanvasObject {
@@ -57,12 +58,18 @@ func (g *gui) makeResponseUI() fyne.CanvasObject {
 		headerMap, _ = g.bindings.headers.Get()
 	}))
 
+	var responseBodyString string
 	g.bindings.body.AddListener(binding.NewDataListener(func() {
-		bodyString, _ := g.bindings.body.Get()
+		responseBodyString, _ = g.bindings.body.Get()
 
-		if len(bodyString) > 200 {
-			responseTab.SetText(bodyString)
-			//responseTab.Refresh()
+		responseTab.SetText(responseBodyString)
+		responseTab.Refresh()
+
+		if g.sidebar != nil {
+			fyne.Do(func() {
+				g.requestHistory = core.ListHistory()
+				g.sidebar.Refresh()
+			})
 		}
 	}))
 

@@ -3,13 +3,13 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/vardanabhanot/myapi/core"
@@ -18,10 +18,12 @@ import (
 type gui struct {
 	Window *fyne.Window
 
-	Tabs     *container.DocTabs
-	urlInput *widget.Entry
-	bindings bindings
-	request  *core.Request
+	urlInput       *widget.Entry
+	bindings       bindings
+	tabs           map[string]*container.TabItem
+	doctabs        *container.DocTabs
+	sidebar        *fyne.Container
+	requestHistory *[]map[string]string
 }
 
 type bindings struct {
@@ -35,31 +37,57 @@ type bindings struct {
 func MakeGUI(window *fyne.Window) fyne.CanvasObject {
 
 	g := &gui{Window: window}
-	g.request = &core.Request{}
-	tabItem := g.makeTab()
-	tabs := container.NewDocTabs(
-		tabItem,
-	)
+	g.tabs = make(map[string]*container.TabItem)
+	g.doctabs = container.NewDocTabs()
+	tabItem := g.makeTab(nil)
+	g.doctabs.Append(tabItem)
 
-	sidebar := g.makeSideBar(tabs)
-	baseView := container.NewHSplit(sidebar, tabs)
+	g.doctabs.CloseIntercept = func(ti *container.TabItem) {
+		var deletable string
+		for child, childItem := range g.tabs {
+			if childItem == ti {
+				deletable = child
+			}
+		}
+
+		if deletable != "" {
+			delete(g.tabs, deletable)
+		}
+
+		g.doctabs.Remove(ti)
+	}
+
+	g.sidebar = g.makeSideBar()
+	baseView := container.NewHSplit(g.sidebar, g.doctabs)
 	baseView.Offset = 0.22
 
 	return container.NewBorder(nil, container.NewHBox(widget.NewLabel("About")), nil, nil, baseView)
 }
 
-func (g *gui) makeTab() *container.TabItem {
+// request here can be nil as we might not want to send it here
+func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
-	request := g.makeRequestUI()
+	// This is a temporary Tab ID as new tab can not have a ID
+	tabID := fmt.Sprintf("%d", time.Now().Unix())
+
+	if request == nil {
+		request = &core.Request{ID: tabID}
+	}
+
+	requestUI := g.makeRequestUI(request)
 	response := g.makeResponseUI()
 	g.urlInput = widget.NewEntry()
 	g.urlInput.SetPlaceHolder("Request URL")
+	if request.URL != "" {
+		g.urlInput.SetText(request.URL)
+	}
+
 	g.urlInput.OnChanged = func(s string) {
-		g.request.URL = s
+		request.URL = s
 	}
 
 	requestType := widget.NewSelect([]string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}, func(value string) {
-		g.request.Method = value
+		request.Method = value
 	})
 
 	requestType.SetSelected("GET")
@@ -69,7 +97,7 @@ func (g *gui) makeTab() *container.TabItem {
 		makeRequest.Disable()
 
 		fyne.Do(func() {
-			res, err := g.request.SendRequest()
+			res, err := request.SendRequest()
 
 			if err != nil {
 				fmt.Println(err)
@@ -89,28 +117,45 @@ func (g *gui) makeTab() *container.TabItem {
 	})
 
 	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, g.urlInput))
-	requestResponseContainer := container.NewVSplit(request, response)
+	requestResponseContainer := container.NewVSplit(requestUI, response)
 	requestResponseContainer.Offset = 0.7
-	tabItem := container.NewTabItem("New Request*", container.NewBorder(requestAction, nil, nil, nil, requestResponseContainer))
+
+	tabName := "New Request *"
+	if request.URL != "" {
+		tabName = request.URL
+
+		if len(tabName) > 20 {
+			tabRune := []rune(tabName)
+			tabName = string(tabRune[0:20])
+			tabName += "..."
+		}
+	}
+
+	tabItem := container.NewTabItem(tabName, container.NewBorder(requestAction, nil, nil, nil, requestResponseContainer))
+
+	// Pushing the tab item to the open tab map
+	g.tabs[tabID] = tabItem
 
 	return tabItem
 }
 
-func (g *gui) makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
+func (g *gui) makeSideBar() *fyne.Container {
 
 	requestButton := container.NewPadded(widget.NewButton("New Request", func() {
-		newTab := g.makeTab()
-		tabs.Append(newTab)
-		tabs.Select(newTab)
+		newTab := g.makeTab(nil)
+		tabID := fmt.Sprintf("%d", time.Now().Unix())
+		g.tabs[tabID] = newTab
+		g.doctabs.Append(newTab)
+		g.doctabs.Select(newTab)
 	}))
 
-	requestHistory := core.ListHistory()
+	g.requestHistory = core.ListHistory()
 
 	var requestList *widget.List
 
 	requestList = widget.NewList(
 		func() int {
-			return len(*requestHistory)
+			return len(*g.requestHistory)
 		},
 		func() fyne.CanvasObject {
 
@@ -144,26 +189,44 @@ func (g *gui) makeSideBar(tabs *container.DocTabs) fyne.CanvasObject {
 
 			firstRow, _ := grid.Objects[0].(*fyne.Container)
 			badge, _ := firstRow.Objects[1].(*fyne.Container)
-			badge.Objects[1].(*fyne.Container).Objects[0].(*canvas.Text).Text = (*requestHistory)[i]["method"]
+			badge.Objects[1].(*fyne.Container).Objects[0].(*canvas.Text).Text = (*g.requestHistory)[i]["method"]
 			grid.Objects[1].(*fyne.Container).Objects[1].(*widget.Button).OnTapped = func() {
-				fmt.Println((*requestHistory)[i]["ID"])
-				fileURI := storage.NewFileURI((*requestHistory)[i]["ID"])
-				err := storage.Delete(fileURI)
+				err := core.DeleteHistory((*g.requestHistory)[i]["ID"])
 
 				if err != nil {
-					fmt.Println(err)
+					dialog.NewError(err, *g.Window)
+					return
 				}
 
-				(*requestHistory) = append((*requestHistory)[:i], (*requestHistory)[i+1:]...)
+				(*g.requestHistory) = append((*g.requestHistory)[:i], (*g.requestHistory)[i+1:]...)
 				requestList.Refresh()
 			}
-			badge.Objects[0].(*canvas.Rectangle).FillColor = methodColor((*requestHistory)[i]["method"])
-			firstRow.Objects[0].(*widget.Label).SetText((*requestHistory)[i]["requestURL"])
+
+			grid.Objects[1].(*fyne.Container).Objects[0].(*canvas.Text).Text = (*g.requestHistory)[i]["mtime"] // Last Request
+			badge.Objects[0].(*canvas.Rectangle).FillColor = methodColor((*g.requestHistory)[i]["method"])
+			firstRow.Objects[0].(*widget.Label).SetText((*g.requestHistory)[i]["requestURL"])
 		},
 	)
 
 	requestList.OnSelected = func(id widget.ListItemID) {
-		fmt.Println(id)
+		for t, i := range g.tabs {
+			if t == (*g.requestHistory)[id]["ID"] {
+				g.doctabs.Select(i)
+				return
+			}
+		}
+
+		request, err := core.LoadRequest((*g.requestHistory)[id]["ID"])
+
+		if err != nil {
+			dialog.NewError(err, *g.Window)
+			return
+		}
+
+		tabItem := g.makeTab(request)
+		g.tabs[(*g.requestHistory)[id]["ID"]] = tabItem
+		g.doctabs.Append(tabItem)
+		g.doctabs.Select(tabItem)
 	}
 
 	rightBorder := canvas.NewLine(theme.Color(theme.ColorNameSeparator))

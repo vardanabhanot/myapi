@@ -12,25 +12,6 @@ import (
 	"github.com/vardanabhanot/myapi/core"
 )
 
-type headerFields struct {
-	ID        int    `json:"id"`
-	Checked   bool   `json:"checked"`
-	Parameter string `json:"parameters"`
-	Value     string `json:"values"`
-}
-
-type bodyFields struct {
-	content_type string
-	content      string
-}
-
-type queryFields struct {
-	id        int
-	checked   bool
-	parameter string
-	value     string
-}
-
 type authOptHolder struct {
 	none   fyne.CanvasObject
 	basic  fyne.CanvasObject
@@ -43,7 +24,7 @@ type bodyOptHolder struct {
 	text fyne.CanvasObject
 }
 
-func (g *gui) makeRequestUI() fyne.CanvasObject {
+func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	var status, size, time string
 	bodyResponse := "No response yet"
@@ -54,15 +35,17 @@ func (g *gui) makeRequestUI() fyne.CanvasObject {
 	g.bindings.headers = binding.NewStringList()
 
 	// Query options
-	g.request.QueryParams = &[]core.FormType{}
-	g.request.Headers = &[]core.FormType{}
-	*g.request.QueryParams = append(*g.request.QueryParams, core.FormType{Checked: true})
-	fields := g.queryBlock(g.request.QueryParams)
+	if request.QueryParams == nil {
+		request.QueryParams = &[]core.FormType{}
+		*request.QueryParams = append(*request.QueryParams, core.FormType{Checked: true})
+	}
+
+	fields := g.queryBlock(request.QueryParams)
 
 	queryContainer := container.NewPadded(
 		container.NewBorder(
 			container.NewBorder(nil, nil, widget.NewLabel("Query Parameters"), widget.NewButton("Add Parameter", func() {
-				*g.request.QueryParams = append(*g.request.QueryParams, core.FormType{Checked: true})
+				*request.QueryParams = append(*request.QueryParams, core.FormType{Checked: true})
 				fields.Refresh()
 			}), nil),
 			nil,
@@ -72,17 +55,22 @@ func (g *gui) makeRequestUI() fyne.CanvasObject {
 		),
 	)
 
-	// Header Options
-	*g.request.Headers = append(*g.request.Headers, core.FormType{Key: "Accept", Value: "*/*", Checked: true})
-	*g.request.Headers = append(*g.request.Headers, core.FormType{Key: "User-Agent", Value: "MyAPI/" + "0.0.1", Checked: true})
-	*g.request.Headers = append(*g.request.Headers, core.FormType{Key: "Accept-Encoding", Value: "gzip, deflate, br", Checked: true})
-	*g.request.Headers = append(*g.request.Headers, core.FormType{Key: "Connection", Value: "keep-alive", Checked: true})
-	headerFieldss := g.headerBlock(g.request.Headers)
+	if request.Headers == nil {
+		request.Headers = &[]core.FormType{}
+
+		// Default Header Options
+		*request.Headers = append(*request.Headers, core.FormType{Key: "Accept", Value: "*/*", Checked: true})
+		*request.Headers = append(*request.Headers, core.FormType{Key: "User-Agent", Value: "MyAPI/" + "0.0.1", Checked: true})
+		*request.Headers = append(*request.Headers, core.FormType{Key: "Accept-Encoding", Value: "gzip, deflate, br", Checked: true})
+		*request.Headers = append(*request.Headers, core.FormType{Key: "Connection", Value: "keep-alive", Checked: true})
+	}
+
+	headerFieldss := g.headerBlock(request.Headers)
 
 	headerContainer := container.NewPadded(
 		container.NewBorder(
 			container.NewBorder(nil, nil, widget.NewLabel("Request Headers"), widget.NewButton("Add Header", func() {
-				*g.request.Headers = append(*g.request.Headers, core.FormType{Checked: true})
+				*request.Headers = append(*request.Headers, core.FormType{Checked: true})
 				headerFieldss.Refresh()
 			}), nil),
 			nil,
@@ -174,7 +162,7 @@ func (g *gui) makeRequestUI() fyne.CanvasObject {
 
 	// Body Options
 	bodyOptIns := &bodyOptHolder{}
-	bodyF := &bodyFields{content_type: "JSON"}
+	request.BodyType = "JSON"
 
 	jsonHeading := widget.NewLabel("JSON")
 	jsonHeading.TextStyle.Bold = true
@@ -183,7 +171,7 @@ func (g *gui) makeRequestUI() fyne.CanvasObject {
 	jsonTextArea.SetMinRowsVisible(7)
 	jsonTextArea.TextStyle.Monospace = true
 	jsonTextArea.OnChanged = func(s string) {
-		bodyF.content = s
+		request.Body = s
 	}
 
 	bodyOptIns.json = container.NewBorder(
@@ -201,7 +189,7 @@ func (g *gui) makeRequestUI() fyne.CanvasObject {
 	xmlTextArea.SetMinRowsVisible(7)
 	xmlTextArea.TextStyle.Monospace = true
 	xmlTextArea.OnChanged = func(s string) {
-		bodyF.content = s
+		request.Body = s
 	}
 
 	bodyOptIns.xml = container.NewBorder(
@@ -216,7 +204,7 @@ func (g *gui) makeRequestUI() fyne.CanvasObject {
 	textHeading.TextStyle.Bold = true
 	textTextArea := widget.NewEntry()
 	textTextArea.OnChanged = func(s string) {
-		bodyF.content = s
+		request.Body = s
 	}
 	textTextArea.MultiLine = true
 	textTextArea.SetMinRowsVisible(7)
@@ -231,7 +219,7 @@ func (g *gui) makeRequestUI() fyne.CanvasObject {
 	)
 
 	bodyOptions := widget.NewRadioGroup([]string{"JSON", "Form", "XML", "Text"}, func(value string) {
-		g.request.BodyType = value
+		request.BodyType = value
 
 		switch value {
 		case "JSON":
@@ -254,8 +242,6 @@ func (g *gui) makeRequestUI() fyne.CanvasObject {
 			bodyOptIns.json.Hide()
 			bodyOptIns.xml.Hide()
 		}
-
-		bodyF.content_type = value // Settings the value to use it when submitting the request
 	})
 
 	bodyOptions.Horizontal = true
