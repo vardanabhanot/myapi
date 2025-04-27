@@ -92,6 +92,14 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	basicHeading := widget.NewLabel("Basic Authentication")
 	basicHeading.TextStyle.Bold = true
 
+	basicUsername.OnChanged = func(s string) {
+		request.Auth.BasicUser = s
+	}
+
+	basicPassword.OnChanged = func(s string) {
+		request.Auth.BasicPass = s
+	}
+
 	authOptIns.basic = container.NewBorder(
 		basicHeading,
 		nil,
@@ -106,11 +114,20 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	bearerPrefix := widget.NewEntry()
 	bearerPrefix.SetText("Bearer")
 
+	bearerPrefix.OnChanged = func(s string) {
+		request.Auth.BearerPrefix = s
+	}
+
 	bearerHeading := widget.NewLabel("Bearer Authentication")
 	bearerHeading.TextStyle.Bold = true
 	bearerTokenArea := widget.NewEntry()
 	bearerTokenArea.MultiLine = true
 	bearerTokenArea.SetMinRowsVisible(7)
+
+	// Updating the Request Bearer token
+	bearerTokenArea.OnChanged = func(s string) {
+		request.Auth.BearerAuth = s
+	}
 
 	authOptIns.bearer = container.NewBorder(
 		bearerHeading,
@@ -133,7 +150,10 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		authOptIns.bearer,
 	)
 
-	authOptions := widget.NewRadioGroup([]string{"None", "Basic", "Bearer", "AWS"}, func(value string) {
+	// TODO:: Will need to implement AWS as well here
+	authOptions := widget.NewRadioGroup([]string{"None", "Basic", "Bearer"}, func(value string) {
+		request.AuthType = value
+
 		switch value {
 		case "None":
 			authOptIns.none.Show()

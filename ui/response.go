@@ -7,7 +7,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
-	"github.com/vardanabhanot/myapi/core"
 )
 
 func (g *gui) makeResponseUI() fyne.CanvasObject {
@@ -45,6 +44,7 @@ func (g *gui) makeResponseUI() fyne.CanvasObject {
 			l.Wrapping = fyne.TextWrapWord
 		},
 	)
+
 	headerTable.SetColumnWidth(0, 200)
 	headerTable.SetColumnWidth(1, 300)
 
@@ -64,13 +64,6 @@ func (g *gui) makeResponseUI() fyne.CanvasObject {
 
 		responseTab.SetText(responseBodyString)
 		responseTab.Refresh()
-
-		if g.sidebar != nil {
-			fyne.Do(func() {
-				g.requestHistory = core.ListHistory()
-				g.sidebar.Refresh()
-			})
-		}
 	}))
 
 	return container.NewBorder(nil, nil, nil, nil, container.NewBorder(nil, nil, nil, nil, tabs))

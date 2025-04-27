@@ -41,62 +41,68 @@ func ListHistory() *[]map[string]string {
 		return &requests
 	}
 
-	fileInfo := []fileMeta{}
+	sort.Slice(requestFiles, func(i, j int) bool {
+		infoI, errI := requestFiles[i].Info()
+		infoJ, errJ := requestFiles[j].Info()
 
-	for _, file := range requestFiles {
-		info, err := file.Info()
-
-		if err == nil {
-			fileInfo = append(fileInfo, fileMeta{info.ModTime(), file})
+		if errI != nil || errJ != nil {
+			// If error, keep original order (safe fallback)
+			return false
 		}
-	}
 
-	sort.Slice(fileInfo, func(i, j int) bool {
-		return fileInfo[i].modTime.After(fileInfo[j].modTime)
+		return infoI.ModTime().After(infoJ.ModTime())
 	})
 
-	requests = LazyLoadHistory(0, &fileInfo)
+	requests = LazyLoadHistory(0, &requestFiles)
 
 	return &requests
 }
 
-func LazyLoadHistory(index int, fileInfo *[]fileMeta) []map[string]string {
+func LazyLoadHistory(index int, requestFiles *[]os.DirEntry) []map[string]string {
 
 	var requests []map[string]string
 
-	localDir, _ := os.UserCacheDir()
-
-	myapiPath := filepath.Join(localDir, "/myapi/")
-
-	for i, file := range *fileInfo {
+	for i, file := range *requestFiles {
 
 		if i > 20 {
 			break
 		}
 
-		filePath := filepath.Join(myapiPath, file.file.Name())
-
-		fileContent, err := os.ReadFile(filePath)
-
-		if err != nil {
-			continue
-		}
-
-		content := &Request{}
-		if err = json.Unmarshal(fileContent, content); err != nil {
-			continue
-		}
-
 		var request = make(map[string]string)
 
-		request["ID"] = file.file.Name()
-		request["requestURL"] = content.URL
-		request["method"] = content.Method
-		request["mtime"] = timeAgo(file.modTime)
+		request["ID"] = file.Name()
 		requests = append(requests, request)
 	}
 
 	return requests
+}
+
+func LoadMetaData(filename string, request *map[string]string) {
+	localDir, _ := os.UserCacheDir()
+	myapiPath := filepath.Join(localDir, "/myapi/")
+
+	filePath := filepath.Join(myapiPath, filename)
+
+	fileContent, err := os.ReadFile(filePath)
+
+	if err != nil {
+		return
+	}
+
+	fileStat, err := os.Stat(filePath)
+
+	if err != nil {
+		return
+	}
+
+	content := &Request{}
+	if err = json.Unmarshal(fileContent, content); err != nil {
+		return
+	}
+
+	(*request)["requestURL"] = content.URL
+	(*request)["method"] = content.Method
+	(*request)["mtime"] = timeAgo(fileStat.ModTime())
 }
 
 func saveRequestData(request *Request) (bool, error) {
@@ -200,7 +206,9 @@ func timeAgo(reqTime time.Time) string {
 		if duration.Hours() > 1 {
 			return fmt.Sprintf("%d Hours Ago", int(duration.Hours()))
 		} else if duration.Minutes() > 1 {
-			return fmt.Sprintf("%d Minutes Ago", int(duration.Hours()))
+			return fmt.Sprintf("%d Minutes Ago", int(duration.Minutes()))
+		} else if duration.Seconds() > 10 {
+			return fmt.Sprintf("%d Seconds Ago", int(duration.Seconds()))
 		} else {
 			return "Now"
 		}
@@ -217,6 +225,6 @@ func timeAgo(reqTime time.Time) string {
 		return fmt.Sprintf("%d Weeks Ago", int(weeks))
 	} else {
 		days := duration.Hours() / 24
-		return fmt.Sprintf("%d DaysAgo", int(days))
+		return fmt.Sprintf("%d Days Ago", int(days))
 	}
 }

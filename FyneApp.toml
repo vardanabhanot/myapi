@@ -1,8 +1,8 @@
 Website = "https://themyapi.com"
 
 [Details]
-Icon = "Icon.PNG"
-Name = "myAPI"
-ID = "com.themyapi"
-Version = "0.0.0"
-Build = 1
+  Icon = "Icon.png"
+  Name = "myAPI"
+  ID = "com.themyapi"
+  Version = "0.0.0"
+  Build = 4

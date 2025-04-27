@@ -18,7 +18,16 @@ type Request struct {
 	BodyType    string      `json:"BodyType"`
 	Body        string      `json:"Body"`
 	AuthType    string      `json:"AuthType"`
+	Auth        *Auth       `json:"Auth"`
 	MTime       string      `json:"-"`
+	IsDirty     bool        `json:"-"`
+}
+
+type Auth struct {
+	BasicUser    string `json:"BasicUser"`
+	BasicPass    string `json:"BasicPass"`
+	BearerAuth   string `json:"BearerAuth"`
+	BearerPrefix string `json:"BearerPrefix"`
 }
 
 type FormType struct {
@@ -30,6 +39,7 @@ type FormType struct {
 type Response struct {
 	Body     string
 	Headers  map[string]string
+	Cookies  []*http.Cookie
 	Status   string
 	Duration time.Duration
 	Size     string
@@ -49,6 +59,16 @@ func (r *Request) SendRequest() (*Response, error) {
 		}
 
 		req.Header.Set(header.Key, header.Value)
+	}
+
+	// Setting Basic Auth in the request
+	if r.AuthType == "Basic" && r.Auth.BasicPass != "" && r.Auth.BasicUser != "" {
+		req.SetBasicAuth(r.Auth.BasicUser, r.Auth.BasicPass)
+	}
+
+	// Setting Bearer auth
+	if r.AuthType == "Bearer" && r.Auth.BearerAuth != "" && r.Auth.BearerPrefix != "" {
+		req.Header.Add("Authorization", r.Auth.BearerPrefix+" "+r.Auth.BearerAuth)
 	}
 
 	if r.Body != "" {
@@ -83,6 +103,7 @@ func (r *Request) SendRequest() (*Response, error) {
 	res.Duration = endTime.Sub(startTime)
 
 	res.Headers = make(map[string]string)
+	res.Cookies = response.Cookies()
 
 	// Convert response headers to a bindable map
 	for key, values := range response.Header {
