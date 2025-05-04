@@ -124,11 +124,27 @@ func (r *Request) SendRequest() (*Response, error) {
 		res.Status = response.Status
 	}
 
-	res.Size = fmt.Sprint(len(body))
+	res.Size = bytestoHuman(len(body))
 
 	if _, err = saveRequestData(r); err != nil {
 		return nil, err
 	}
 
 	return res, nil
+}
+
+func bytestoHuman(byteLen int) string {
+	var kb_in_bytes = 1024
+	var mb_in_bytes int = 1024 * kb_in_bytes
+	var gb_in_bytes int = 1024 * mb_in_bytes
+
+	if byteLen >= gb_in_bytes {
+		return fmt.Sprintf("%d GB", byteLen/gb_in_bytes)
+	} else if byteLen >= mb_in_bytes {
+		return fmt.Sprintf("%d MB", byteLen/mb_in_bytes)
+	} else if byteLen >= kb_in_bytes {
+		return fmt.Sprintf("%d KB", byteLen/kb_in_bytes)
+	}
+
+	return fmt.Sprintf("%d bytes", byteLen)
 }

@@ -7,30 +7,24 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
+	"github.com/vardanabhanot/myapi/core"
 )
 
-func (g *gui) makeResponseUI() fyne.CanvasObject {
-
-	// max := container.NewPadded(container.NewAdaptiveGrid(
-	// 	3,
-	// 	widget.NewLabelWithData(a.statusBinding),
-	// 	widget.NewLabelWithData(a.sizeBinding),
-	// 	widget.NewLabelWithData(a.timeBinding),
-	// ))
-
-	bodyString, _ := g.bindings.body.Get()
+func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
+	bindings := g.tabs[request.ID+".json"].bindings
+	bodyString, _ := bindings.body.Get()
 	responseTab := widget.NewTextGridFromString(bodyString)
 	responseTab.Scroll = fyne.ScrollBoth
 	responseTab.ShowLineNumbers = true
 	responseTab.ShowWhitespace = true
 
-	headerMap, _ := g.bindings.headers.Get()
+	headerMap, _ := bindings.headers.Get()
 	headerTable := widget.NewTable(
 		func() (int, int) {
 			return len(headerMap), 2
 		},
 		func() fyne.CanvasObject {
-			return container.NewStack(widget.NewLabel("wide content"))
+			return widget.NewLabel("wide content")
 		},
 		func(i widget.TableCellID, o fyne.CanvasObject) {
 			rows := [][]string{}
@@ -39,14 +33,14 @@ func (g *gui) makeResponseUI() fyne.CanvasObject {
 				rows = append(rows, row)
 			}
 
-			l := o.(*fyne.Container).Objects[0].(*widget.Label)
+			l := o.(*widget.Label)
 			l.SetText(rows[i.Row][i.Col])
 			l.Wrapping = fyne.TextWrapWord
 		},
 	)
 
 	headerTable.SetColumnWidth(0, 200)
-	headerTable.SetColumnWidth(1, 300)
+	headerTable.SetColumnWidth(1, 500)
 
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Response", responseTab),
@@ -54,16 +48,15 @@ func (g *gui) makeResponseUI() fyne.CanvasObject {
 		container.NewTabItem("Cookies", widget.NewLabel("Cookies here")),
 	)
 
-	g.bindings.headers.AddListener(binding.NewDataListener(func() {
-		headerMap, _ = g.bindings.headers.Get()
+	bindings.headers.AddListener(binding.NewDataListener(func() {
+		headerMap, _ = bindings.headers.Get()
 	}))
 
 	var responseBodyString string
-	g.bindings.body.AddListener(binding.NewDataListener(func() {
-		responseBodyString, _ = g.bindings.body.Get()
+	bindings.body.AddListener(binding.NewDataListener(func() {
+		responseBodyString, _ = bindings.body.Get()
 
 		responseTab.SetText(responseBodyString)
-		responseTab.Refresh()
 	}))
 
 	return container.NewBorder(nil, nil, nil, nil, container.NewBorder(nil, nil, nil, nil, tabs))

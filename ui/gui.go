@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"runtime"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -18,13 +19,19 @@ import (
 type gui struct {
 	Window *fyne.Window
 
-	urlInput       *widget.Entry
-	bindings       bindings
-	tabs           map[string]*container.TabItem
+	urlInput *widget.Entry
+	//bindings       bindings
+	tabs           map[string]*tab
 	doctabs        *container.DocTabs
 	sidebar        *fyne.Container
 	requestHistory *[]map[string]string
 	requestList    *widget.List
+}
+
+type tab struct {
+	bindings *bindings
+	item     *container.TabItem
+	request  *core.Request
 }
 
 type bindings struct {
@@ -38,18 +45,20 @@ type bindings struct {
 func MakeGUI(window *fyne.Window) fyne.CanvasObject {
 
 	g := &gui{Window: window}
-	g.tabs = make(map[string]*container.TabItem)
+	g.tabs = make(map[string]*tab)
 	g.doctabs = container.NewDocTabs()
 	tabItem := g.makeTab(nil)
 	g.doctabs.Append(tabItem)
 
 	g.doctabs.CloseIntercept = func(ti *container.TabItem) {
 		var deletable string
-		for child, childItem := range g.tabs {
-			if childItem == ti {
+		for child, tab := range g.tabs {
+			if tab.item == ti {
 				deletable = child
 			}
 		}
+
+		g.tabs[deletable].request = nil
 
 		if deletable != "" {
 			delete(g.tabs, deletable)
@@ -61,14 +70,16 @@ func MakeGUI(window *fyne.Window) fyne.CanvasObject {
 		if len(g.doctabs.Items) == 0 {
 			g.doctabs.Append(g.makeTab(nil))
 		}
+
+		runtime.GC()
 	}
 
 	g.doctabs.OnSelected = func(tabItem *container.TabItem) {
 		// The structure of g.tabs is a map of [tabID]DocTabTab Items
 		// And the structur of g.requestHistory is a map of [tabID][historyData]
 		// List reuquestList does not corelate to openedTab thats why we need to make a check through requestHistory
-		for tabID, opendTabItem := range g.tabs {
-			if opendTabItem == tabItem {
+		for tabID, openedTab := range g.tabs {
+			if openedTab.item == tabItem {
 				for index, history := range *g.requestHistory {
 					if history["ID"] == tabID {
 						g.requestList.Select(index)
@@ -86,7 +97,12 @@ func MakeGUI(window *fyne.Window) fyne.CanvasObject {
 	baseView := container.NewHSplit(g.sidebar, g.doctabs)
 	baseView.Offset = 0.22
 
-	return container.NewBorder(nil, container.NewHBox(widget.NewLabel("About")), nil, nil, baseView)
+	footerSeperator := widget.NewSeparator()
+	footerContent := canvas.NewText("Version: 0.0.0", theme.Color(theme.ColorNameForeground))
+	footerContent.TextSize = 12
+	footer := container.New(newFooterLayout(footerSeperator), footerSeperator, footerContent)
+
+	return container.NewBorder(nil, footer, nil, nil, baseView)
 }
 
 // request here can be nil as we might not want to send it here
@@ -98,8 +114,11 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		request = &core.Request{ID: tabID, Method: "GET", IsDirty: true}
 	}
 
-	requestUI := g.makeRequestUI(request)
-	response := g.makeResponseUI()
+	// Pushing the tab item to the open tab map
+	g.tabs[request.ID+".json"] = &tab{item: nil, bindings: &bindings{}, request: request}
+
+	requestUI := g.makeRequestUI(g.tabs[request.ID+".json"].request)
+	response := g.makeResponseUI(g.tabs[request.ID+".json"].request)
 	g.urlInput = widget.NewEntry()
 	g.urlInput.SetPlaceHolder("Request URL")
 	if request.URL != "" {
@@ -136,54 +155,81 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 	makeRequest = widget.NewButton("Send", func() {
 		makeRequest.Disable()
 
-		fyne.Do(func() {
+		go func() {
 			res, err := request.SendRequest()
 
 			if err != nil {
 				errorDialoge := dialog.NewError(err, *g.Window)
 				errorDialoge.Show()
-				makeRequest.Enable()
+
+				fyne.Do(func() {
+					makeRequest.Enable()
+				})
+
 				return
 			}
 
-			g.bindings.body.Set(res.Body)
+			// Updating the open tab list with our new tab data
+			// This only should happen for the first request on a new tab
+			if g.tabs[request.ID+".json"] == nil {
+				g.tabs[request.ID+".json"] = &tab{item: g.doctabs.Selected(), bindings: &bindings{}, request: &core.Request{}}
+			}
+
+			bindings := g.tabs[request.ID+".json"].bindings
+			if request.Method == "HEAD" {
+				res.Body = "Head Request do not have a body"
+			}
+
+			bindings.body.Set(res.Body)
 
 			var headers []string
 			for name, value := range res.Headers {
 				headers = append(headers, name+"||"+value)
 			}
 
-			g.bindings.headers.Set(headers)
-			g.bindings.size.Set(res.Size)
-			g.bindings.status.Set(res.Status)
-			makeRequest.Enable()
+			bindings.headers.Set(headers)
+			bindings.size.Set(res.Size)
+			bindings.status.Set(res.Status)
+			bindings.time.Set(res.Duration.Abs().String())
 
-			// Updating the open tab list with our new tab data
-			// This only should happen for the first request on a new tab
-			if g.tabs[request.ID+".json"] == nil {
-				g.tabs[request.ID+".json"] = g.doctabs.Selected()
-			}
+			fyne.Do(func() {
+				makeRequest.Enable()
+			})
 
 			// To update the current tab text as if it is dirty it set a *
 			if request.IsDirty {
 				request.IsDirty = false
 				g.doctabs.Selected().Text = maybTruncateURL(g.urlInput.Text)
-				g.doctabs.Refresh()
+
+				fyne.Do(func() {
+					g.doctabs.Refresh()
+				})
+
 			}
 
 			// Updating the List
 			g.requestHistory = core.ListHistory()
-			g.requestList.Refresh()
 
-			// Setting 0 becuase when a request is made then the list item of that request
-			// Comes to the top of the list which has a index of 0
-			g.requestList.Select(0)
-		})
+			fyne.Do(func() {
+				g.requestList.Refresh()
 
+				// Setting 0 becuase when a request is made then the list item of that request
+				// Comes to the top of the list which has a index of 0
+				g.requestList.Select(0)
+			})
+		}()
 	})
 
 	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, g.urlInput))
-	requestResponseContainer := container.NewVSplit(requestUI, response)
+	responseMetaData := container.NewHBox(
+		widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.status),
+		widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.size),
+		widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.time),
+	)
+
+	requestMetaFloat := container.NewBorder(nil, nil, nil, responseMetaData, nil)
+	requestResponseContainer := container.NewVSplit(requestUI, container.NewStack(response, requestMetaFloat))
+
 	requestResponseContainer.Offset = 0.7
 
 	tabName := "New Request *"
@@ -193,8 +239,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 	tabItem := container.NewTabItem(tabName, container.NewBorder(requestAction, nil, nil, nil, requestResponseContainer))
 
-	// Pushing the tab item to the open tab map
-	g.tabs[request.ID+".json"] = tabItem
+	g.tabs[request.ID+".json"].item = tabItem
 
 	return tabItem
 }
@@ -240,7 +285,7 @@ func (g *gui) makeSideBar() *fyne.Container {
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 
-			if o.Visible() {
+			if o.Visible() && (*g.requestHistory)[i]["mtime"] == "" {
 				core.LoadMetaData((*g.requestHistory)[i]["ID"], &(*g.requestHistory)[i])
 			}
 			paddedC, _ := o.(*fyne.Container)
@@ -272,12 +317,12 @@ func (g *gui) makeSideBar() *fyne.Container {
 		for t, i := range g.tabs {
 			// If the List Select is triggered by the select of the tab then we need to make sure
 			// we do not end up reselecting the doctab as that got selected already.
-			if t == (*g.requestHistory)[id]["ID"] && g.doctabs.Selected() == i {
+			if t == (*g.requestHistory)[id]["ID"] && g.doctabs.Selected() == i.item {
 				return
 			}
 
 			if t == (*g.requestHistory)[id]["ID"] {
-				g.doctabs.Select(i)
+				g.doctabs.Select(i.item)
 				return
 			}
 		}
@@ -289,8 +334,9 @@ func (g *gui) makeSideBar() *fyne.Container {
 			return
 		}
 
+		g.tabs[(*g.requestHistory)[id]["ID"]] = &tab{bindings: &bindings{}}
 		tabItem := g.makeTab(request)
-		g.tabs[(*g.requestHistory)[id]["ID"]] = tabItem
+		g.tabs[(*g.requestHistory)[id]["ID"]].item = tabItem
 		g.doctabs.Append(tabItem)
 		g.doctabs.Select(tabItem)
 	}

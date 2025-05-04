@@ -13,11 +13,6 @@ import (
 	"fyne.io/fyne/v2/storage"
 )
 
-type fileMeta struct {
-	modTime time.Time
-	file    os.DirEntry
-}
-
 func ListHistory() *[]map[string]string {
 	localDir, err := os.UserCacheDir()
 

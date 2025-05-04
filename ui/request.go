@@ -28,11 +28,12 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	var status, size, time string
 	bodyResponse := "No response yet"
-	g.bindings.status = binding.BindString(&status)
-	g.bindings.size = binding.BindString(&size)
-	g.bindings.time = binding.BindString(&time)
-	g.bindings.body = binding.BindString(&bodyResponse)
-	g.bindings.headers = binding.NewStringList()
+	bindings := g.tabs[request.ID+".json"].bindings
+	bindings.status = binding.BindString(&status)
+	bindings.size = binding.BindString(&size)
+	bindings.time = binding.BindString(&time)
+	bindings.body = binding.BindString(&bodyResponse)
+	bindings.headers = binding.NewStringList()
 
 	// Query options
 	if request.QueryParams == nil {
@@ -45,7 +46,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	queryContainer := container.NewPadded(
 		container.NewBorder(
 			container.NewBorder(nil, nil, widget.NewLabel("Query Parameters"), widget.NewButton("Add Parameter", func() {
-				*request.QueryParams = append(*request.QueryParams, core.FormType{Checked: true})
+				*request.QueryParams = append(*request.QueryParams, core.FormType{})
 				fields.Refresh()
 			}), nil),
 			nil,
@@ -80,6 +81,10 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		),
 	)
 
+	if request.Auth == nil {
+		request.Auth = &core.Auth{}
+	}
+
 	// Auth Options
 	authOptIns := &authOptHolder{}
 	authOptIns.none = container.NewVBox(widget.NewLabel("No Authentication Selected"))
@@ -91,6 +96,14 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	basicPassword.Password = true
 	basicHeading := widget.NewLabel("Basic Authentication")
 	basicHeading.TextStyle.Bold = true
+
+	if request.Auth.BasicUser != "" {
+		basicUsername.SetText(request.Auth.BasicUser)
+	}
+
+	if request.Auth.BasicPass != "" {
+		basicPassword.SetText(request.Auth.BasicPass)
+	}
 
 	basicUsername.OnChanged = func(s string) {
 		request.Auth.BasicUser = s
@@ -112,7 +125,12 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	)
 
 	bearerPrefix := widget.NewEntry()
-	bearerPrefix.SetText("Bearer")
+
+	if request.Auth.BearerPrefix != "" {
+		bearerPrefix.SetText(request.Auth.BearerPrefix)
+	} else {
+		bearerPrefix.SetText("Bearer")
+	}
 
 	bearerPrefix.OnChanged = func(s string) {
 		request.Auth.BearerPrefix = s
@@ -123,6 +141,10 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	bearerTokenArea := widget.NewEntry()
 	bearerTokenArea.MultiLine = true
 	bearerTokenArea.SetMinRowsVisible(7)
+
+	if request.Auth.BearerAuth != "" {
+		bearerTokenArea.SetText(request.Auth.BearerAuth) // Loading the Auth token
+	}
 
 	// Updating the Request Bearer token
 	bearerTokenArea.OnChanged = func(s string) {
@@ -174,7 +196,13 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	})
 
 	authOptions.Horizontal = true
-	authOptions.SetSelected("None")
+
+	// Loading the Request
+	if request.AuthType != "" {
+		authOptions.SetSelected(request.AuthType)
+	} else {
+		authOptions.SetSelected("None")
+	}
 
 	authContainer := container.NewPadded(
 		container.NewBorder(authOptions, nil, nil, nil, authOptionView),
@@ -182,11 +210,17 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	// Body Options
 	bodyOptIns := &bodyOptHolder{}
-	request.BodyType = "JSON"
+	if request.BodyType == "" {
+		request.BodyType = "JSON"
+	}
 
 	jsonHeading := widget.NewLabel("JSON")
 	jsonHeading.TextStyle.Bold = true
 	jsonTextArea := widget.NewEntry()
+	if request.Body != "" && request.BodyType == "JSON" {
+		jsonTextArea.SetText(request.Body)
+	}
+
 	jsonTextArea.MultiLine = true
 	jsonTextArea.SetMinRowsVisible(7)
 	jsonTextArea.TextStyle.Monospace = true
@@ -205,6 +239,11 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	xmlHeading := widget.NewLabel("XML")
 	xmlHeading.TextStyle.Bold = true
 	xmlTextArea := widget.NewEntry()
+
+	if request.Body != "" && request.BodyType == "XML" {
+		jsonTextArea.SetText(request.Body)
+	}
+
 	xmlTextArea.MultiLine = true
 	xmlTextArea.SetMinRowsVisible(7)
 	xmlTextArea.TextStyle.Monospace = true
@@ -223,6 +262,11 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	textHeading := widget.NewLabel("Text")
 	textHeading.TextStyle.Bold = true
 	textTextArea := widget.NewEntry()
+
+	if request.Body != "" && request.BodyType == "Text" {
+		jsonTextArea.SetText(request.Body)
+	}
+
 	textTextArea.OnChanged = func(s string) {
 		request.Body = s
 	}
@@ -318,6 +362,12 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 		entry.SetChecked((*queries)[lii].Checked)
 		entry.OnChanged = func(b bool) {
 			(*queries)[lii].Checked = b
+
+			if g.urlInput.Text == "" {
+				return
+			}
+
+			g.updateURL(queries)
 		}
 
 		if lii == 0 {
@@ -329,7 +379,8 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 		btn.OnTapped = func() {
 			*queries = append((*queries)[:lii], (*queries)[lii+1:]...)
 			list.Refresh()
-			g.urlInput.Refresh()
+
+			g.updateURL(queries)
 		}
 
 		entryCtx, _ := ctx.Objects[0].(*fyne.Container)
@@ -339,55 +390,55 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 		parameter.OnChanged = func(s string) {
 			(*queries)[lii].Key = s
 
-			params := url.Values{}
-
-			for _, q := range *queries {
-				if q.Checked {
-					params.Add(q.Key, "")
-				}
+			if !(*queries)[lii].Checked {
+				return
 			}
 
 			if g.urlInput.Text == "" {
 				return
 			}
 
-			parsedURL, err := url.Parse(g.urlInput.Text)
-
-			if err != nil {
-				log.Println(err)
-				return
-			}
-
-			g.urlInput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path + "?" + params.Encode())
+			g.updateURL(queries)
 		}
 		value := entryCtx.Objects[1].(*widget.Entry)
 		value.SetText((*queries)[lii].Value)
 		value.OnChanged = func(s string) {
 			(*queries)[lii].Value = s
 
-			params := url.Values{}
-
-			for _, q := range *queries {
-				if q.Checked {
-					params.Add(q.Key, q.Value)
-				}
-			}
-
-			if g.urlInput.Text == "" {
+			if !(*queries)[lii].Checked {
 				return
 			}
 
-			parsedURL, err := url.Parse(g.urlInput.Text)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-
-			g.urlInput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path + "?" + params.Encode())
+			g.updateURL(queries)
 		}
 	})
 
 	return list
+}
+
+func (g *gui) updateURL(queries *[]core.FormType) {
+	params := url.Values{}
+
+	for _, q := range *queries {
+		if q.Checked {
+			params.Add(q.Key, q.Value)
+		}
+	}
+
+	parsedURL, err := url.Parse(g.urlInput.Text)
+
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	if len(params) < 1 {
+		g.urlInput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path)
+		//g.urlInput.Refresh()
+		return
+	}
+
+	g.urlInput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path + "?" + params.Encode())
 }
 
 func (g *gui) headerBlock(headers *[]core.FormType) fyne.CanvasObject {
