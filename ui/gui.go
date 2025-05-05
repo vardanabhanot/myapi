@@ -19,8 +19,7 @@ import (
 type gui struct {
 	Window *fyne.Window
 
-	urlInput *widget.Entry
-	//bindings       bindings
+	urlInput       *widget.Entry
 	tabs           map[string]*tab
 	doctabs        *container.DocTabs
 	sidebar        *fyne.Container
@@ -59,6 +58,7 @@ func MakeGUI(window *fyne.Window) fyne.CanvasObject {
 		}
 
 		g.tabs[deletable].request = nil
+		g.tabs[deletable].bindings = nil
 
 		if deletable != "" {
 			delete(g.tabs, deletable)
@@ -191,6 +191,8 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 			bindings.size.Set(res.Size)
 			bindings.status.Set(res.Status)
 			bindings.time.Set(res.Duration.Abs().String())
+
+			res.Body = ""
 
 			fyne.Do(func() {
 				makeRequest.Enable()

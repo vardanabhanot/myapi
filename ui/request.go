@@ -126,14 +126,14 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	bearerPrefix := widget.NewEntry()
 
+	bearerPrefix.OnChanged = func(s string) {
+		request.Auth.BearerPrefix = s
+	}
+
 	if request.Auth.BearerPrefix != "" {
 		bearerPrefix.SetText(request.Auth.BearerPrefix)
 	} else {
 		bearerPrefix.SetText("Bearer")
-	}
-
-	bearerPrefix.OnChanged = func(s string) {
-		request.Auth.BearerPrefix = s
 	}
 
 	bearerHeading := widget.NewLabel("Bearer Authentication")
