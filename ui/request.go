@@ -22,6 +22,7 @@ type bodyOptHolder struct {
 	json fyne.CanvasObject
 	xml  fyne.CanvasObject
 	text fyne.CanvasObject
+	form fyne.CanvasObject
 }
 
 func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
@@ -61,8 +62,8 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 		// Default Header Options
 		*request.Headers = append(*request.Headers, core.FormType{Key: "Accept", Value: "*/*", Checked: true})
-		*request.Headers = append(*request.Headers, core.FormType{Key: "User-Agent", Value: "MyAPI/" + "0.0.1", Checked: true})
-		*request.Headers = append(*request.Headers, core.FormType{Key: "Accept-Encoding", Value: "gzip, deflate, br", Checked: true})
+		*request.Headers = append(*request.Headers, core.FormType{Key: "User-Agent", Value: "MyAPI/" + appversion, Checked: true})
+		//*request.Headers = append(*request.Headers, core.FormType{Key: "Accept-Encoding", Value: "gzip, deflate, br", Checked: true})
 		*request.Headers = append(*request.Headers, core.FormType{Key: "Connection", Value: "keep-alive", Checked: true})
 	}
 
@@ -140,7 +141,9 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	bearerHeading.TextStyle.Bold = true
 	bearerTokenArea := widget.NewEntry()
 	bearerTokenArea.MultiLine = true
-	bearerTokenArea.SetMinRowsVisible(7)
+	bearerTokenArea.SetMinRowsVisible(5)
+	bearerTokenArea.Scroll = fyne.ScrollVerticalOnly
+	bearerTokenArea.Wrapping = fyne.TextWrapBreak
 
 	if request.Auth.BearerAuth != "" {
 		bearerTokenArea.SetText(request.Auth.BearerAuth) // Loading the Auth token
@@ -217,15 +220,15 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	jsonHeading := widget.NewLabel("JSON")
 	jsonHeading.TextStyle.Bold = true
 	jsonTextArea := widget.NewEntry()
-	if request.Body != "" && request.BodyType == "JSON" {
-		jsonTextArea.SetText(request.Body)
+	if request.Body.Json != "" && request.BodyType == "JSON" {
+		jsonTextArea.SetText(request.Body.Json)
 	}
 
 	jsonTextArea.MultiLine = true
-	jsonTextArea.SetMinRowsVisible(7)
+	jsonTextArea.SetMinRowsVisible(5)
 	jsonTextArea.TextStyle.Monospace = true
 	jsonTextArea.OnChanged = func(s string) {
-		request.Body = s
+		request.Body.Json = s
 	}
 
 	bodyOptIns.json = container.NewBorder(
@@ -240,15 +243,15 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	xmlHeading.TextStyle.Bold = true
 	xmlTextArea := widget.NewEntry()
 
-	if request.Body != "" && request.BodyType == "XML" {
-		jsonTextArea.SetText(request.Body)
+	if request.Body.Xml != "" && request.BodyType == "XML" {
+		jsonTextArea.SetText(request.Body.Xml)
 	}
 
 	xmlTextArea.MultiLine = true
 	xmlTextArea.SetMinRowsVisible(7)
 	xmlTextArea.TextStyle.Monospace = true
 	xmlTextArea.OnChanged = func(s string) {
-		request.Body = s
+		request.Body.Xml = s
 	}
 
 	bodyOptIns.xml = container.NewBorder(
@@ -263,12 +266,12 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	textHeading.TextStyle.Bold = true
 	textTextArea := widget.NewEntry()
 
-	if request.Body != "" && request.BodyType == "Text" {
-		jsonTextArea.SetText(request.Body)
+	if request.Body.Text != "" && request.BodyType == "Text" {
+		jsonTextArea.SetText(request.Body.Text)
 	}
 
 	textTextArea.OnChanged = func(s string) {
-		request.Body = s
+		request.Body.Text = s
 	}
 	textTextArea.MultiLine = true
 	textTextArea.SetMinRowsVisible(7)
@@ -282,6 +285,35 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		textTextArea,
 	)
 
+	if request.Body.Form == nil {
+		request.Body.Form = &[]core.FormType{}
+		*request.Body.Form = append(*request.Body.Form, core.FormType{Checked: true})
+	}
+
+	formFieldsBlock := g.formBlock(request.Body.Form)
+	formHeading := widget.NewLabel("Form Fields")
+	formHeading.TextStyle.Bold = true
+	formContainer := container.NewPadded(
+		container.NewBorder(
+			container.NewBorder(nil, nil, formHeading, widget.NewButton("Add Field", func() {
+				*request.Body.Form = append(*request.Body.Form, core.FormType{})
+				formFieldsBlock.Refresh()
+			}), nil),
+			nil,
+			nil,
+			nil,
+			formFieldsBlock,
+		),
+	)
+
+	bodyOptIns.form = container.NewBorder(
+		nil,
+		nil,
+		nil,
+		nil,
+		formContainer,
+	)
+
 	bodyOptions := widget.NewRadioGroup([]string{"JSON", "Form", "XML", "Text"}, func(value string) {
 		request.BodyType = value
 
@@ -290,8 +322,10 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 			bodyOptIns.json.Show()
 			bodyOptIns.xml.Hide()
 			bodyOptIns.text.Hide()
+			bodyOptIns.form.Hide()
 
 		case "Form":
+			bodyOptIns.form.Show()
 			bodyOptIns.json.Hide()
 			bodyOptIns.xml.Hide()
 			bodyOptIns.text.Hide()
@@ -300,19 +334,26 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 			bodyOptIns.xml.Show()
 			bodyOptIns.json.Hide()
 			bodyOptIns.text.Hide()
+			bodyOptIns.form.Hide()
 
 		case "Text":
 			bodyOptIns.text.Show()
 			bodyOptIns.json.Hide()
 			bodyOptIns.xml.Hide()
+			bodyOptIns.form.Hide()
 		}
 	})
 
 	bodyOptions.Horizontal = true
-	bodyOptions.SetSelected("JSON")
+
+	if request.BodyType == "" {
+		bodyOptions.SetSelected("JSON")
+	} else {
+		bodyOptions.SetSelected(request.BodyType)
+	}
 
 	bodyOptIns.json.Show()
-	//bodyOptIns.form.Hide() // TODO:: Need to implement forms, am lazy to do it now as it will need key value inputs
+	bodyOptIns.form.Hide() // TODO:: Need to implement forms, am lazy to do it now as it will need key value inputs
 	bodyOptIns.xml.Hide()
 	bodyOptIns.text.Hide()
 
@@ -320,6 +361,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		bodyOptIns.json,
 		bodyOptIns.xml,
 		bodyOptIns.text,
+		bodyOptIns.form,
 	)
 
 	bodyContainer := container.NewPadded(
@@ -483,6 +525,54 @@ func (g *gui) headerBlock(headers *[]core.FormType) fyne.CanvasObject {
 		value.SetText((*headers)[lii].Value)
 		value.OnChanged = func(s string) {
 			(*headers)[lii].Value = s
+		}
+	})
+
+	return list
+}
+
+func (g *gui) formBlock(fields *[]core.FormType) fyne.CanvasObject {
+
+	var list *widget.List
+	list = widget.NewList(func() int {
+		return len(*fields)
+	}, func() fyne.CanvasObject {
+		parameterEntry := widget.NewEntry()
+		parameterEntry.SetPlaceHolder("Form")
+		valueEntry := widget.NewEntry()
+		valueEntry.SetPlaceHolder("value")
+
+		return container.NewBorder(nil, nil,
+			widget.NewCheck("", func(b bool) {}),
+			widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {}),
+			container.NewGridWithColumns(2, parameterEntry, valueEntry),
+		)
+	}, func(lii widget.ListItemID, co fyne.CanvasObject) {
+		ctx, _ := co.(*fyne.Container)
+		entry := ctx.Objects[1].(*widget.Check)
+		entry.SetChecked((*fields)[lii].Checked)
+		entry.OnChanged = func(b bool) {
+			(*fields)[lii].Checked = b
+		}
+
+		btn := ctx.Objects[2].(*widget.Button)
+		btn.OnTapped = func() {
+			(*fields) = append((*fields)[:lii], (*fields)[lii+1:]...)
+			list.Refresh()
+		}
+
+		entryCtx, _ := ctx.Objects[0].(*fyne.Container)
+
+		parameter := entryCtx.Objects[0].(*widget.Entry)
+		parameter.SetText((*fields)[lii].Key)
+		parameter.OnChanged = func(s string) {
+			(*fields)[lii].Key = s
+		}
+
+		value := entryCtx.Objects[1].(*widget.Entry)
+		value.SetText((*fields)[lii].Value)
+		value.OnChanged = func(s string) {
+			(*fields)[lii].Value = s
 		}
 	})
 

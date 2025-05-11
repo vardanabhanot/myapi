@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"net/url"
 	"runtime"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/vardanabhanot/myapi/core"
 )
+
+var appversion string
 
 type gui struct {
 	Window *fyne.Window
@@ -41,9 +44,10 @@ type bindings struct {
 	time    binding.String
 }
 
-func MakeGUI(window *fyne.Window) fyne.CanvasObject {
+func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 
 	g := &gui{Window: window}
+	appversion = version
 	g.tabs = make(map[string]*tab)
 	g.doctabs = container.NewDocTabs()
 	tabItem := g.makeTab(nil)
@@ -94,13 +98,21 @@ func MakeGUI(window *fyne.Window) fyne.CanvasObject {
 	}
 
 	g.sidebar = g.makeSideBar()
-	baseView := container.NewHSplit(g.sidebar, g.doctabs)
+	baseView := NewHSplit(g.sidebar, g.doctabs)
 	baseView.Offset = 0.22
 
 	footerSeperator := widget.NewSeparator()
-	footerContent := canvas.NewText("Version: 0.0.0", theme.Color(theme.ColorNameForeground))
-	footerContent.TextSize = 12
-	footer := container.New(newFooterLayout(footerSeperator), footerSeperator, footerContent)
+	versionLabel := widget.NewLabel("Version: " + version)
+	siteURL, _ := url.Parse("https://themyapi.com")
+	myAPISite := widget.NewHyperlink("Website", siteURL)
+	footerContent := container.NewHBox(
+		myAPISite,
+		canvas.NewCircle(theme.Color(theme.ColorNameDisabled)),
+		versionLabel,
+		canvas.NewRectangle(theme.Color(theme.ColorNameBackground)),
+	)
+
+	footer := container.NewThemeOverride(container.NewBorder(footerSeperator, nil, nil, footerContent, nil), &footerTheme{})
 
 	return container.NewBorder(nil, footer, nil, nil, baseView)
 }
@@ -206,7 +218,6 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 				fyne.Do(func() {
 					g.doctabs.Refresh()
 				})
-
 			}
 
 			// Updating the List
@@ -230,9 +241,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 	)
 
 	requestMetaFloat := container.NewBorder(nil, nil, nil, responseMetaData, nil)
-	requestResponseContainer := container.NewVSplit(requestUI, container.NewStack(response, requestMetaFloat))
-
-	requestResponseContainer.Offset = 0.7
+	requestResponseContainer := container.NewStack(requestUI, NewResponseContainer(container.NewStack(response, requestMetaFloat)))
 
 	tabName := "New Request *"
 	if request.URL != "" {

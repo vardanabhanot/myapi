@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"time"
 )
@@ -16,11 +17,18 @@ type Request struct {
 	QueryParams *[]FormType `json:"QueryParams"`
 	Headers     *[]FormType `json:"Headers"`
 	BodyType    string      `json:"BodyType"`
-	Body        string      `json:"Body"`
+	Body        Body        `json:"Body"`
 	AuthType    string      `json:"AuthType"`
 	Auth        *Auth       `json:"Auth"`
 	MTime       string      `json:"-"`
 	IsDirty     bool        `json:"-"`
+}
+
+type Body struct {
+	Json string      `json:"Json"`
+	Text string      `json:"Text"`
+	Xml  string      `json:"Xml"`
+	Form *[]FormType `json:"Form"`
 }
 
 type Auth struct {
@@ -71,20 +79,36 @@ func (r *Request) SendRequest() (*Response, error) {
 		req.Header.Add("Authorization", r.Auth.BearerPrefix+" "+r.Auth.BearerAuth)
 	}
 
-	if r.Body != "" {
+	if r.Body.Json != "" || r.Body.Xml != "" || r.Body.Text != "" || r.Body.Form != nil {
 		switch r.BodyType {
 		case "JSON":
 			req.Header.Set("Content-Type", "application/json")
+			req.Body = io.NopCloser(bytes.NewBuffer([]byte(r.Body.Json)))
 
 		case "XML":
 			req.Header.Set("Content-Type", "application/xml")
+			req.Body = io.NopCloser(bytes.NewBuffer([]byte(r.Body.Xml)))
 
 		case "Text":
 			req.Header.Set("Content-Type", "text/plain")
+			req.Body = io.NopCloser(bytes.NewBuffer([]byte(r.Body.Text)))
 
+		case "Form":
+			var b bytes.Buffer
+			writer := multipart.NewWriter(&b)
+
+			for _, v := range *r.Body.Form {
+				if v.Checked {
+					writer.WriteField(v.Key, v.Value)
+				}
+			}
+
+			req.Header.Set("Content-Type", writer.FormDataContentType())
+			writer.Close()
+
+			req.Body = io.NopCloser(&b)
 		}
 
-		req.Body = io.NopCloser(bytes.NewBuffer([]byte(r.Body)))
 	}
 
 	client := &http.Client{}

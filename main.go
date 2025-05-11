@@ -6,16 +6,15 @@ import (
 	"github.com/vardanabhanot/myapi/ui"
 )
 
-const VERSION = "0.0.1"
-
-var window fyne.Window
+var version string
 
 func main() {
 	a := app.New()
-	window = a.NewWindow("MyAPI")
+	window := a.NewWindow("MyAPI")
 
+	version = a.Metadata().Version
 	window.Resize(fyne.NewSize(1024, 600))
 	window.CenterOnScreen()
-	window.SetContent(ui.MakeGUI(&window))
+	window.SetContent(ui.MakeGUI(&window, version))
 	window.ShowAndRun()
 }

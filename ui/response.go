@@ -45,7 +45,7 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Response", responseTab),
 		container.NewTabItem("Headers", headerTable),
-		container.NewTabItem("Cookies", widget.NewLabel("Cookies here")),
+		//container.NewTabItem("Cookies", widget.NewLabel("Cookies here")),
 	)
 
 	bindings.headers.AddListener(binding.NewDataListener(func() {
