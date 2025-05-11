@@ -21,3 +21,4 @@ myAPI is a simple API testing tool, made in Go using Fyne Toolkit
 - [ ] Adding a Spinner, Fyne has Activity widget, but want to add a Spinner when the request is happening.
 - [ ] Option to cancel the request.
 - [ ] Fix the TextGrid memory issue, when the full html page gets loaded.
+- [ ] Fix the memory issue that occurs when a lot of tabs with content exceeding 200 characters are used, as memory usage increases exponentially.
