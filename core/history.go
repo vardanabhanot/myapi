@@ -13,6 +13,9 @@ import (
 	"fyne.io/fyne/v2/storage"
 )
 
+// The request data are saved in json files, in the OS's Cache dir
+// And the time of creation of the tab of request is used as the key
+
 func ListHistory() *[]map[string]string {
 	localDir, err := os.UserCacheDir()
 

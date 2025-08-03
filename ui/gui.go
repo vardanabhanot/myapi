@@ -53,6 +53,7 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 	tabItem := g.makeTab(nil)
 	g.doctabs.Append(tabItem)
 
+	// Need to clean g.tabs when the tab is closed
 	g.doctabs.CloseIntercept = func(ti *container.TabItem) {
 		var deletable string
 		for child, tab := range g.tabs {
@@ -61,14 +62,13 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 			}
 		}
 
-		g.tabs[deletable].request = nil
-		g.tabs[deletable].bindings = nil
-
 		if deletable != "" {
 			delete(g.tabs, deletable)
 		}
 
 		g.doctabs.Remove(ti)
+		ti.Content = nil
+		ti = nil
 
 		// If all tabs are closed we need to add a new empty tab
 		if len(g.doctabs.Items) == 0 {
@@ -140,6 +140,59 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 	g.urlInput.OnChanged = func(s string) {
 		request.URL = s
 		request.IsDirty = true
+		
+		// Handling, query input blocks get added and deleted when
+		// when query params gets added/removed directly to the URL input
+		// Making query blocks and url input be 2 way binding.
+		if parsedURL, err := url.Parse(request.URL); err == nil {
+			parameters := parsedURL.Query()
+
+			if len(parameters) > 0 && len(*request.QueryParams) > 0 {
+				for i, params := range *request.QueryParams {
+					if params.Value == "" || params.Key == "" {
+						*request.QueryParams = append((*request.QueryParams)[:i], (*request.QueryParams)[i+1:]...)
+						continue
+					}
+
+					if params.Checked && params.Key != "" && len(parameters[params.Key]) != 0 {
+						if len(parameters[params.Key]) == 1 {
+							*request.QueryParams = nil
+							continue
+						}
+						*request.QueryParams = append((*request.QueryParams)[:i], (*request.QueryParams)[i+1:]...)
+						continue
+					}
+				}
+			}
+
+			for key, value := range parameters {
+				if value[0] != "" {
+					var skipAppend bool = false
+					for i, params := range *request.QueryParams {
+						if params.Key == "" {
+							(*request.QueryParams)[i].Key = key
+							(*request.QueryParams)[i].Value = value[0]
+							(*request.QueryParams)[i].Checked = true
+							skipAppend = true
+							break
+						} else if params.Key == key {
+							(*request.QueryParams)[i].Value = value[0]
+							(*request.QueryParams)[i].Checked = true
+							skipAppend = true
+							break
+						} else if params.Value == "" && params.Key != "" {
+							*request.QueryParams = append((*request.QueryParams)[:i], (*request.QueryParams)[i+1:]...)
+							skipAppend = true
+							break
+						}
+					}
+					if !skipAppend {
+						*request.QueryParams = append(*request.QueryParams, core.FormType{Checked: true, Key: key, Value: value[0]})
+					}
+				}
+
+			}
+		}
 
 		if s == "" {
 			s = "New Request"
