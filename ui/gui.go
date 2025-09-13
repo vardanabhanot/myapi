@@ -140,7 +140,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 	g.urlInput.OnChanged = func(s string) {
 		request.URL = s
 		request.IsDirty = true
-		
+
 		// Handling, query input blocks get added and deleted when
 		// when query params gets added/removed directly to the URL input
 		// Making query blocks and url input be 2 way binding.
@@ -310,7 +310,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 func (g *gui) makeSideBar() *fyne.Container {
 
-	requestButton := container.NewPadded(widget.NewButton("New Request", func() {
+	newRequestButton := container.NewPadded(widget.NewButton("New", func() {
 		newTab := g.makeTab(nil)
 		g.doctabs.Append(newTab)
 		g.doctabs.Select(newTab)
@@ -341,10 +341,12 @@ func (g *gui) makeSideBar() *fyne.Container {
 			timeElapsed.TextSize = 10
 			timeElapsed.TextStyle.Italic = true
 
+			optionsIcon := widget.NewButtonWithIcon("", theme.MoreVerticalIcon(), func() {})
+
 			return container.NewPadded(
 				container.NewGridWithRows(2,
 					container.NewBorder(nil, nil, badge, nil, url),
-					container.NewBorder(nil, nil, timeElapsed, widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {})),
+					container.NewBorder(nil, nil, timeElapsed, optionsIcon),
 				))
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
@@ -406,14 +408,19 @@ func (g *gui) makeSideBar() *fyne.Container {
 	}
 
 	rightBorder := canvas.NewLine(theme.Color(theme.ColorNameSeparator))
-	rightBorder.StrokeWidth = 0.7
+	rightBorder.StrokeWidth = 0.3
+
+	sideBarLabel := widget.NewLabel("History")
+	sideBarLabel.TextStyle.Bold = true
+
+	sideBarHeader := container.NewBorder(nil, nil, sideBarLabel, newRequestButton, nil)
 
 	return container.NewBorder(
 		nil,
 		nil,
 		nil,
-		rightBorder,
-		container.NewBorder(requestButton, nil, nil, nil, g.requestList))
+		nil,
+		container.NewBorder(sideBarHeader, nil, nil, nil, g.requestList))
 }
 
 func methodColor(method string) *color.RGBA {

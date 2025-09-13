@@ -370,10 +370,10 @@ func dividerTheme(d *divider) fyne.Theme {
 
 func dividerThickness(d *divider) float32 {
 	if d.hovered {
-		return 4.5
+		return 4
 	}
 
-	return 1.8
+	return 1
 }
 
 func dividerLength(d *divider) float32 {
