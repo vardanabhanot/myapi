@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"image/color"
 	"net/url"
@@ -28,6 +30,8 @@ type gui struct {
 	sidebar        *fyne.Container
 	requestHistory *[]map[string]string
 	requestList    *widget.List
+	requestCtx     context.Context
+	cancelRequest  context.CancelFunc
 }
 
 type tab struct {
@@ -218,18 +222,34 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 	var makeRequest *widget.Button
 	makeRequest = widget.NewButton("Send", func() {
-		makeRequest.Disable()
+		if makeRequest.Text == "Cancel" {
+			go func() {
+				g.cancelRequest()
+			}()
+			return
+		}
 
-		go func() {
-			res, err := request.SendRequest()
+		// Create a cancelable context
+		g.requestCtx, g.cancelRequest = context.WithCancel(context.Background())
+
+		//makeRequest.Disable()
+		makeRequest.SetText("Cancel")
+
+		go func(ctx context.Context) {
+			defer fyne.Do(func() {
+				makeRequest.SetText("Send")
+				g.cancelRequest = nil
+			})
+
+			res, err := request.SendRequest(ctx)
 
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+
 				errorDialoge := dialog.NewError(err, *g.Window)
 				errorDialoge.Show()
-
-				fyne.Do(func() {
-					makeRequest.Enable()
-				})
 
 				return
 			}
@@ -259,10 +279,6 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 			res.Body = ""
 
-			fyne.Do(func() {
-				makeRequest.Enable()
-			})
-
 			// To update the current tab text as if it is dirty it set a *
 			if request.IsDirty {
 				request.IsDirty = false
@@ -283,7 +299,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 				// Comes to the top of the list which has a index of 0
 				g.requestList.Select(0)
 			})
-		}()
+		}(g.requestCtx)
 	})
 
 	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, g.urlInput))
@@ -341,22 +357,24 @@ func (g *gui) makeSideBar() *fyne.Container {
 			timeElapsed.TextSize = 10
 			timeElapsed.TextStyle.Italic = true
 
-			optionsIcon := widget.NewButtonWithIcon("", theme.MoreVerticalIcon(), func() {})
+			optionsIcon := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {})
+			optionsIcon.Hide()
 
-			return container.NewPadded(
+			return newHoverableListItem(container.NewPadded(
 				container.NewGridWithRows(2,
 					container.NewBorder(nil, nil, badge, nil, url),
 					container.NewBorder(nil, nil, timeElapsed, optionsIcon),
-				))
+				)))
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 
 			if o.Visible() && (*g.requestHistory)[i]["mtime"] == "" {
 				core.LoadMetaData((*g.requestHistory)[i]["ID"], &(*g.requestHistory)[i])
 			}
-			paddedC, _ := o.(*fyne.Container)
-			grid, _ := paddedC.Objects[0].(*fyne.Container)
 
+			hoverableContainer, _ := o.(*hoverableListItem)
+			paddedC, _ := hoverableContainer.content.(*fyne.Container)
+			grid, _ := paddedC.Objects[0].(*fyne.Container)
 			firstRow, _ := grid.Objects[0].(*fyne.Container)
 			badge, _ := firstRow.Objects[1].(*fyne.Container)
 			badge.Objects[1].(*fyne.Container).Objects[0].(*canvas.Text).Text = (*g.requestHistory)[i]["method"]

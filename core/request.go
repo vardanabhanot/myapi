@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -53,13 +54,15 @@ type Response struct {
 	Size     string
 }
 
-func (r *Request) SendRequest() (*Response, error) {
+func (r *Request) SendRequest(ctx context.Context) (*Response, error) {
 	req, err := http.NewRequest(r.Method, r.URL, nil)
 
 	if err != nil {
 		log.Println(err)
 		return nil, err
 	}
+
+	req = req.WithContext(ctx)
 
 	for _, header := range *r.Headers {
 		if !header.Checked || header.Key == "" || header.Value == "" {
