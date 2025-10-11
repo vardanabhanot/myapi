@@ -29,20 +29,24 @@ func (h *hoverableListItem) CreateRenderer() fyne.WidgetRenderer {
 
 func (h *hoverableListItem) MouseIn(e *desktop.MouseEvent) {
 	h.hovered = true
-	paddedC, _ := h.content.(*fyne.Container)
-	grid, _ := paddedC.Objects[0].(*fyne.Container)
-	grid.Objects[1].(*fyne.Container).Objects[1].(*widget.Button).Show()
+	paddedContainer, _ := h.content.(*fyne.Container)
+	borderContainer, _ := paddedContainer.Objects[0].(*fyne.Container)
+	optionsStack := borderContainer.Objects[2].(*fyne.Container)
+	optionsStack.Objects[0].(*fyne.Container).Hide() // The container of the elpased time
+	optionsStack.Objects[1].(*tappableIcon).Show()
 	h.Refresh()
 }
 
 func (h *hoverableListItem) MouseOut() {
 	h.hovered = false
-	paddedC, _ := h.content.(*fyne.Container)
-	grid, _ := paddedC.Objects[0].(*fyne.Container)
-	grid.Objects[1].(*fyne.Container).Objects[1].(*widget.Button).Hide()
+	paddedContainer, _ := h.content.(*fyne.Container)
+	borderContainer, _ := paddedContainer.Objects[0].(*fyne.Container)
+	optionsStack := borderContainer.Objects[2].(*fyne.Container)
+	optionsStack.Objects[0].(*fyne.Container).Show() // The container of the elpased time
+	optionsStack.Objects[1].(*tappableIcon).Hide()
 	h.Refresh()
 }
 
 func (h *hoverableListItem) MouseMoved(*desktop.MouseEvent) {
-	// not using
+	// not used
 }

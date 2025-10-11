@@ -202,11 +202,11 @@ func timeAgo(reqTime time.Time) string {
 
 	if duration.Hours() < 24 {
 		if duration.Hours() > 1 {
-			return fmt.Sprintf("%d Hours Ago", int(duration.Hours()))
+			return fmt.Sprintf("%dh", int(duration.Hours()))
 		} else if duration.Minutes() > 1 {
-			return fmt.Sprintf("%d Minutes Ago", int(duration.Minutes()))
+			return fmt.Sprintf("%dm", int(duration.Minutes()))
 		} else if duration.Seconds() > 10 {
-			return fmt.Sprintf("%d Seconds Ago", int(duration.Seconds()))
+			return fmt.Sprintf("%ds", int(duration.Seconds()))
 		} else {
 			return "Now"
 		}
@@ -214,15 +214,15 @@ func timeAgo(reqTime time.Time) string {
 
 	if duration.Hours() >= 8760 {
 		years := duration.Hours() / 8760
-		return fmt.Sprintf("%d Years Ago", int(years))
+		return fmt.Sprintf("%dY", int(years))
 	} else if duration.Hours() >= 730 {
 		months := duration.Hours() / 730
-		return fmt.Sprintf("%d Months Ago", int(months))
+		return fmt.Sprintf("%dM", int(months))
 	} else if duration.Hours() >= 168 {
 		weeks := duration.Hours() / 168
-		return fmt.Sprintf("%d Weeks Ago", int(weeks))
+		return fmt.Sprintf("%dW", int(weeks))
 	} else {
 		days := duration.Hours() / 24
-		return fmt.Sprintf("%d Days Ago", int(days))
+		return fmt.Sprintf("%dd", int(days))
 	}
 }

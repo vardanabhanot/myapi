@@ -368,12 +368,12 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		container.NewBorder(bodyOptions, nil, nil, nil, bodyOptionView),
 	)
 
-	tabs := container.NewAppTabs(
-		container.NewTabItem("Query", queryContainer),
-		container.NewTabItem("Headers", headerContainer),
-		container.NewTabItem("Auth", authContainer),
-		container.NewTabItem("Body", bodyContainer),
-	)
+	tabs := container.NewThemeOverride(container.NewAppTabs(
+		container.NewTabItem("Query", container.NewThemeOverride(queryContainer, &overridePaddingTheme{})),
+		container.NewTabItem("Headers", container.NewThemeOverride(headerContainer, &overridePaddingTheme{})),
+		container.NewTabItem("Auth", container.NewThemeOverride(authContainer, &overridePaddingTheme{})),
+		container.NewTabItem("Body", container.NewThemeOverride(bodyContainer, &overridePaddingTheme{})),
+	), &overridePaddingTheme{padding: 1.5})
 
 	return container.NewBorder(nil, nil, nil, nil, tabs)
 }
