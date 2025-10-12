@@ -196,6 +196,37 @@ func LoadRequest(id string) (*Request, error) {
 
 }
 
+func CloneHistory(id string) error {
+	localDir, err := os.UserCacheDir()
+
+	if err != nil {
+		return err
+	}
+
+	file := filepath.Join(localDir, "/myapi/"+id)
+
+	fileContent, err := os.ReadFile(file)
+
+	if err != nil {
+		return err
+	}
+
+	var request Request
+	if err = json.Unmarshal(fileContent, &request); err != nil {
+		return err
+	}
+
+	request.ID = "" // emptying the old ID so it regenerates
+
+	_, err = saveRequestData(&request)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func timeAgo(reqTime time.Time) string {
 
 	duration := time.Since(reqTime)

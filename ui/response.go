@@ -91,17 +91,31 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 		headerMap, _ = bindings.headers.Get()
 	}))
 
+	var responsePlaceholder *fyne.Container
+	responsePlaceholder = container.NewBorder(widget.NewLabel("Response"), nil, nil, nil, container.NewCenter(widget.NewLabel("Make a request to see a response here")))
+
 	var responseBodyString string
-	bindings.body.AddListener(binding.NewDataListener(func() {
+	g.tabs[request.ID+".json"].bodyListner = binding.NewDataListener(func() {
 		responseBodyString, _ = bindings.body.Get()
+
+		// We dont want to do anything if the binding has just been initialized
+		if responseBodyString == "" {
+			return
+		}
+
+		responsePlaceholder.Hide()
+		tabs.Show()
 
 		responseTab.SetText(responseBodyString)
 
 		if responseBodyString != "No response yet" && responseBodyString != "" {
 			copyIcon.Show()
 		}
+	})
 
-	}))
+	bindings.body.AddListener(g.tabs[request.ID+".json"].bodyListner)
 
-	return container.NewBorder(nil, nil, nil, nil, container.NewBorder(nil, nil, nil, nil, tabs))
+	tabs.Hide()
+	stackedTabs := container.NewStack(responsePlaceholder, tabs)
+	return container.NewBorder(nil, nil, nil, nil, container.NewBorder(nil, nil, nil, nil, stackedTabs))
 }

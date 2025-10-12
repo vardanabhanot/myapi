@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"image/color"
 	"net/url"
-	"runtime"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -35,9 +34,10 @@ type gui struct {
 }
 
 type tab struct {
-	bindings *bindings
-	item     *container.TabItem
-	request  *core.Request
+	bindings    *bindings
+	item        *container.TabItem
+	request     *core.Request
+	bodyListner binding.DataListener
 }
 
 type bindings struct {
@@ -66,7 +66,15 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 			}
 		}
 
+		// Clean Up
 		if deletable != "" {
+			g.tabs[deletable].bindings.body.RemoveListener(g.tabs[deletable].bodyListner)
+			g.tabs[deletable].bindings.body = nil
+			g.tabs[deletable].bindings.headers = nil
+			g.tabs[deletable].bindings.status = nil
+			g.tabs[deletable].bindings.time = nil
+			g.tabs[deletable].bodyListner = nil
+			g.tabs[deletable].bindings = nil
 			delete(g.tabs, deletable)
 		}
 
@@ -78,8 +86,6 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 		if len(g.doctabs.Items) == 0 {
 			g.doctabs.Append(g.makeTab(nil))
 		}
-
-		runtime.GC()
 	}
 
 	g.doctabs.OnSelected = func(tabItem *container.TabItem) {
@@ -302,6 +308,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		}(g.requestCtx)
 	})
 
+	//statusDataLabel := widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.status)
 	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, g.urlInput))
 	responseMetaData := container.NewHBox(
 		widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.status),
@@ -332,139 +339,12 @@ func (g *gui) makeSideBar() *fyne.Container {
 		g.doctabs.Select(newTab)
 	}))
 
+	// newCollectionBtn := container.NewPadded(widget.NewButton("New", func() {
+
+	// }))
+
 	g.requestHistory = core.ListHistory()
-	g.requestList = widget.NewList(
-		func() int {
-			return len(*g.requestHistory)
-		},
-		func() fyne.CanvasObject {
-
-			//bg := canvas.NewRectangle(color.RGBA{72, 180, 97, 255})
-			//bg.SetMinSize(fyne.NewSize(40, 15)) // Adjust size as needed
-			//bg.CornerRadius = 6
-
-			// Text label
-			label := canvas.NewText("GET", color.White)
-			label.Alignment = fyne.TextAlignCenter
-			label.TextStyle.Bold = true
-			label.TextSize = 10
-			label.Color = color.RGBA{72, 180, 97, 10}
-
-			badge := container.NewCenter(label)
-			url := widget.NewLabel("https://themyapi.com/")
-			url.Truncation = fyne.TextTruncateEllipsis
-
-			timeElapsed := canvas.NewText("1d", theme.Color(theme.ColorNameForeground))
-			timeElapsed.TextSize = 10
-			timeElapsedPadded := container.NewPadded(timeElapsed)
-
-			optionsIcon := newTappableIcon(theme.MoreHorizontalIcon(), func() {})
-			optionsIcon.Hide()
-
-			optionsStack := container.NewStack(timeElapsedPadded, optionsIcon)
-
-			return newHoverableListItem(container.NewPadded(
-				container.NewBorder(nil, nil, badge, optionsStack, url),
-			))
-		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-
-			if o.Visible() && (*g.requestHistory)[i]["mtime"] == "" {
-				core.LoadMetaData((*g.requestHistory)[i]["ID"], &(*g.requestHistory)[i])
-			}
-
-			hoverableContainer, _ := o.(*hoverableListItem)
-			paddedContainer, _ := hoverableContainer.content.(*fyne.Container)
-			borderContainer, _ := paddedContainer.Objects[0].(*fyne.Container)
-			badgeContainer := borderContainer.Objects[1].(*fyne.Container)
-			optionsStack := borderContainer.Objects[2].(*fyne.Container)
-			timeContainer := optionsStack.Objects[0].(*fyne.Container)
-
-			optionsStack.Objects[1].(*tappableIcon).onTapped = func() {
-				var items []*fyne.MenuItem
-				i := fyne.NewMenuItem("Delete", func() {
-					err := core.DeleteHistory((*g.requestHistory)[i]["ID"])
-
-					if err != nil {
-						dialog.NewError(err, *g.Window)
-						return
-					}
-
-					(*g.requestHistory) = append((*g.requestHistory)[:i], (*g.requestHistory)[i+1:]...)
-					g.requestList.Refresh()
-				})
-
-				items = append(items, i)
-
-				clone := fyne.NewMenuItem("Clone", func() {})
-				items = append(items, clone)
-
-				d := fyne.CurrentApp().Driver()
-				icon := optionsStack.Objects[1].(*tappableIcon)
-				c := d.CanvasForObject(icon)
-				popUpMenu := widget.NewPopUpMenu(fyne.NewMenu("", items...), c)
-				buttonPos := d.AbsolutePositionForObject(icon)
-				buttonSize := icon.Size()
-
-				var popUpPos fyne.Position
-				popUpPos.X = buttonPos.X + (buttonSize.Width / 2)
-				popUpPos.Y = buttonPos.Y + (buttonSize.Height / 1.2)
-
-				if popUpPos.X < 0 {
-					popUpPos.X = 0
-				}
-				if popUpPos.Y < 0 {
-					popUpPos.Y = 0
-				}
-
-				// Position the popup near the icon
-				popUpMenu.ShowAtPosition(popUpPos)
-				popUpMenu.Resize(fyne.NewSize(120, popUpMenu.MinSize().Height))
-
-			}
-
-			// Setting values
-			//badgeContainer.Objects[0].(*canvas.Rectangle).FillColor = methodColor((*g.requestHistory)[i]["method"])
-			if len((*g.requestHistory)[i]["method"]) > 4 {
-				badgeContainer.Objects[0].(*canvas.Text).Text = (*g.requestHistory)[i]["method"][0:3]
-			} else {
-				badgeContainer.Objects[0].(*canvas.Text).Text = (*g.requestHistory)[i]["method"]
-			}
-
-			badgeContainer.Objects[0].(*canvas.Text).Color = methodColor((*g.requestHistory)[i]["method"])
-			borderContainer.Objects[0].(*widget.Label).SetText((*g.requestHistory)[i]["requestURL"])
-			timeContainer.Objects[0].(*canvas.Text).Text = (*g.requestHistory)[i]["mtime"] // Last Request
-		},
-	)
-
-	// Handling loading of the history
-	g.requestList.OnSelected = func(id widget.ListItemID) {
-		for t, i := range g.tabs {
-			// If the List Select is triggered by the select of the tab then we need to make sure
-			// we do not end up reselecting the doctab as that got selected already.
-			if t == (*g.requestHistory)[id]["ID"] && g.doctabs.Selected() == i.item {
-				return
-			}
-
-			if t == (*g.requestHistory)[id]["ID"] {
-				g.doctabs.Select(i.item)
-				return
-			}
-		}
-
-		request, err := core.LoadRequest((*g.requestHistory)[id]["ID"])
-
-		if err != nil {
-			dialog.NewError(err, *g.Window)
-			return
-		}
-
-		g.tabs[(*g.requestHistory)[id]["ID"]] = &tab{bindings: &bindings{}}
-		tabItem := g.makeTab(request)
-		g.tabs[(*g.requestHistory)[id]["ID"]].item = tabItem
-		g.doctabs.Append(tabItem)
-		g.doctabs.Select(tabItem)
-	}
+	g.renderHistoryContent()
 
 	rightBorder := canvas.NewLine(theme.Color(theme.ColorNameSeparator))
 	rightBorder.StrokeWidth = 0.3
@@ -472,9 +352,32 @@ func (g *gui) makeSideBar() *fyne.Container {
 	sideBarLabel := widget.NewLabel("History")
 	sideBarLabel.TextStyle.Bold = true
 
+	collections := widget.NewTree(
+		func(tni widget.TreeNodeID) []widget.TreeNodeID {
+			switch tni {
+			case "":
+				return []widget.TreeNodeID{"a", "b", "c"}
+			}
+			return []string{}
+		}, func(tni widget.TreeNodeID) bool {
+			return tni == "" || tni == "a"
+		}, func(b bool) fyne.CanvasObject {
+			if b {
+				return widget.NewLabel("Branch template")
+			}
+			return widget.NewLabel("Leaf template")
+		}, func(tni widget.TreeNodeID, b bool, co fyne.CanvasObject) {
+			text := tni
+			if b {
+				text += " (branch)"
+			}
+			co.(*widget.Label).SetText(text)
+		},
+	)
+
 	sideBarHeader := container.NewBorder(nil, nil, sideBarLabel, newRequestButton, nil)
 	historyTabContent := container.NewBorder(sideBarHeader, nil, nil, nil, g.requestList)
-	collectionTabContent := container.NewBorder(widget.NewLabel("Collection"), nil, nil, nil)
+	collectionTabContent := container.NewBorder(nil, nil, nil, nil, collections)
 	envTabContent := container.NewBorder(widget.NewLabel("Environment"), nil, nil, nil)
 
 	historyTab := widget.NewButtonWithIcon("", theme.HistoryIcon(), func() {
@@ -515,6 +418,10 @@ func (g *gui) makeSideBar() *fyne.Container {
 	shortcutsButton := widget.NewButtonWithIcon("", shortCutIcon.Resource, func() {
 		keyboardShortcuts := widget.NewModalPopUp(widget.NewLabel("Keyboard Shortcuts"), (*g.Window).Canvas())
 		keyboardShortcuts.Show()
+
+		time.AfterFunc(3*time.Second, func() {
+			keyboardShortcuts.Hide()
+		})
 	})
 
 	sideSwitcher := container.NewVBox(historyTab, collectionTab, envTab)
