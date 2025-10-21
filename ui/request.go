@@ -3,13 +3,16 @@ package ui
 import (
 	"log"
 	"net/url"
+	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/vardanabhanot/myapi/core"
+	"github.com/vardanabhanot/myapi/core/codegen"
 )
 
 type authOptHolder struct {
@@ -26,11 +29,11 @@ type bodyOptHolder struct {
 }
 
 func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
-	var status, size, time, bodyResponse string
+	var status, size, resTime, bodyResponse string
 	bindings := g.tabs[request.ID+".json"].bindings
 	bindings.status = binding.BindString(&status)
 	bindings.size = binding.BindString(&size)
-	bindings.time = binding.BindString(&time)
+	bindings.time = binding.BindString(&resTime)
 	bindings.body = binding.BindString(&bodyResponse)
 	bindings.headers = binding.NewStringList()
 
@@ -366,12 +369,87 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		container.NewBorder(bodyOptions, nil, nil, nil, bodyOptionView),
 	)
 
-	tabs := container.NewThemeOverride(container.NewAppTabs(
-		container.NewTabItem("Query", container.NewThemeOverride(queryContainer, &overridePaddingTheme{})),
-		container.NewTabItem("Headers", container.NewThemeOverride(headerContainer, &overridePaddingTheme{})),
-		container.NewTabItem("Auth", container.NewThemeOverride(authContainer, &overridePaddingTheme{})),
-		container.NewTabItem("Body", container.NewThemeOverride(bodyContainer, &overridePaddingTheme{})),
-	), &overridePaddingTheme{padding: 1.5})
+	
+	// Code Gen Container
+	var codeContainer *fyne.Container
+	var tabs *container.ThemeOverride
+	var tabSplit *container.Split
+	var codeIconTappable *widget.Button
+	codeIconTappable = widget.NewButtonWithIcon("", theme.NewThemedResource(resourceCodeSvg), func() {
+		if codeContainer.Visible() {
+			codeContainer.Hide()
+			codeIconTappable.Importance = widget.LowImportance
+			tabSplit.Offset = 1
+			tabSplit.Refresh()
+			return
+		}
+		codeContainer.Show()
+		tabSplit.Offset = 0.6
+		codeIconTappable.Importance = widget.MediumImportance
+		codeContainer.Refresh()
+	})
+
+	codeIconTappable.Importance = widget.LowImportance
+
+	var codePreviewContainer *container.ThemeOverride
+
+	languageOption := codegen.GetSupportedLanguages()
+	var codePreview *widget.TextGrid
+	codeBackGround := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
+	codeBackGround.CornerRadius = 6
+	codePreview = widget.NewTextGrid()
+	codePreview.ShowLineNumbers = true
+	codePreview.ShowWhitespace = true
+	codePreview.Scroll = fyne.ScrollHorizontalOnly
+
+	languageSelect := widget.NewSelect(languageOption, func(s string) {
+		code, err := codegen.GenerateCode(s, request)
+
+		if err != nil {
+			return
+		}
+
+		codePreview.SetText(code)
+	})
+
+	languageSelect.SetSelectedIndex(0)
+	var copyCode *widget.Button
+
+	copyCode = widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+		code := codePreview.Text()
+		copyCode.SetIcon(theme.ConfirmIcon())
+		fyne.CurrentApp().Clipboard().SetContent(code)
+		time.AfterFunc(2*time.Second, func() {
+			fyne.Do(func() {
+				copyCode.SetIcon(theme.ContentCopyIcon())
+			})
+		})
+	})
+
+	codePreviewContainer = container.NewThemeOverride(container.NewPadded(container.NewVBox(
+		container.NewBorder(nil, nil, nil, copyCode, languageSelect),
+		container.NewStack(
+			codeBackGround,
+			container.NewThemeOverride(
+				container.NewPadded(codePreview), &overridePaddingTheme{padding: 10})),
+	)), &overridePaddingTheme{padding: 4})
+
+	codeContainer = container.NewBorder(widget.NewLabel("Code Generator"), nil, nil, nil, codePreviewContainer)
+	codeContainer.Hide()
+
+	tabSplit = container.NewHSplit(container.NewStack(
+		container.NewAppTabs(
+			container.NewTabItem("Query", container.NewThemeOverride(queryContainer, &overridePaddingTheme{})),
+			container.NewTabItem("Headers", container.NewThemeOverride(headerContainer, &overridePaddingTheme{})),
+			container.NewTabItem("Auth", container.NewThemeOverride(authContainer, &overridePaddingTheme{})),
+			container.NewTabItem("Body", container.NewThemeOverride(bodyContainer, &overridePaddingTheme{})),
+		),
+		container.NewBorder(container.NewBorder(nil, nil, nil, codeIconTappable), nil, nil, nil),
+	), codeContainer)
+
+	tabSplit.Offset = 0.6
+
+	tabs = container.NewThemeOverride(tabSplit, &overridePaddingTheme{padding: 1.5})
 
 	return container.NewBorder(nil, nil, nil, nil, tabs)
 }

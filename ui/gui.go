@@ -224,7 +224,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 	})
 
 	requestType.SetSelected(request.Method)
-	requestType.Resize(fyne.NewSize(10, 40))
+	//requestType.Resize(fyne.NewSize(10, 40))
 
 	var makeRequest *widget.Button
 	makeRequest = widget.NewButton("Send", func() {
@@ -308,6 +308,12 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		}(g.requestCtx)
 	})
 
+	makeRequest.Importance = widget.HighImportance // Using it for button to have the theme color
+	// Triggring request on enter
+	g.urlInput.OnSubmitted = func(s string) {
+		makeRequest.Tapped(&fyne.PointEvent{})
+	}
+
 	//statusDataLabel := widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.status)
 	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, g.urlInput))
 	responseMetaData := container.NewHBox(
@@ -379,40 +385,74 @@ func (g *gui) makeSideBar() *fyne.Container {
 	historyTabContent := container.NewBorder(sideBarHeader, nil, nil, nil, g.requestList)
 	collectionTabContent := container.NewBorder(nil, nil, nil, nil, collections)
 	envTabContent := container.NewBorder(widget.NewLabel("Environment"), nil, nil, nil)
+	
+	// Sidebar Icon tabs active state
+	// TODO:: will need to make a custom widget to handle this
+	historyTabActive := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
+	historyTabActive.CornerRadius = 7
+	collectionTabActive := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
+	collectionTabActive.CornerRadius = 7
+	envTabActive := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
+	envTabActive.CornerRadius = 7
 
-	historyTab := widget.NewButtonWithIcon("", theme.HistoryIcon(), func() {
+	// History is the default tab so it will stay active on startup
+	collectionTabActive.Hide()
+	envTabActive.Hide()
+
+	var historyTab *widget.Button
+	historyTab = widget.NewButtonWithIcon("", theme.HistoryIcon(), func() {
 		historyTabContent.Show()
+		historyTabActive.Show()
+
 		if collectionTabContent.Visible() {
 			collectionTabContent.Hide()
+			collectionTabActive.Hide()
 		}
 
 		if envTabContent.Visible() {
 			envTabContent.Hide()
+			envTabActive.Hide()
 		}
 	})
+
+	historyTab.Importance = widget.LowImportance
+	historyTabIconWrap := container.NewStack(historyTabActive, historyTab)
 
 	collectionTab := widget.NewButtonWithIcon("", theme.FolderIcon(), func() {
 		collectionTabContent.Show()
+		collectionTabActive.Show()
+
 		if historyTabContent.Visible() {
 			historyTabContent.Hide()
+			historyTabActive.Hide()
 		}
 
 		if envTabContent.Visible() {
 			envTabContent.Hide()
+			envTabActive.Hide()
 		}
 
 	})
+	collectionTab.Importance = widget.LowImportance
+	collectionTabIconWrap := container.NewStack(collectionTabActive, collectionTab)
+
 	envTab := widget.NewButtonWithIcon("", theme.ComputerIcon(), func() {
 		envTabContent.Show()
+		envTabActive.Show()
+
 		if collectionTabContent.Visible() {
 			collectionTabContent.Hide()
+			collectionTabActive.Hide()
 		}
 
 		if historyTabContent.Visible() {
 			historyTabContent.Hide()
+			historyTabActive.Hide()
 		}
 
 	})
+	envTab.Importance = widget.LowImportance
+	envTabIconWrap := container.NewStack(envTabActive, envTab)
 
 	shortCutIcon := widget.NewIcon(theme.NewThemedResource(resourceKeyboardSvg))
 	shortcutsButton := widget.NewButtonWithIcon("", shortCutIcon.Resource, func() {
@@ -420,11 +460,15 @@ func (g *gui) makeSideBar() *fyne.Container {
 		keyboardShortcuts.Show()
 
 		time.AfterFunc(3*time.Second, func() {
-			keyboardShortcuts.Hide()
+			fyne.Do(func() {
+				keyboardShortcuts.Hide()
+			})
 		})
 	})
 
-	sideSwitcher := container.NewVBox(historyTab, collectionTab, envTab)
+	shortcutsButton.Importance = widget.LowImportance
+
+	sideSwitcher := container.NewVBox(historyTabIconWrap, collectionTabIconWrap, envTabIconWrap)
 
 	collectionTabContent.Hide()
 	envTabContent.Hide()

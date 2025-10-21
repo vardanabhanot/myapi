@@ -7,16 +7,22 @@ myAPI is a simple API testing tool, made in Go using Fyne Toolkit
 
 > [!NOTE]
 > This project is in its early stages, but you're welcome to give it a try!
-> 
+>
 
 ## Screenshots
 ![my-api-dev-state.png](https://github.com/vardanabhanot/myapi/blob/main/my-api-dev-state.png)
+![my-api-dev-state-dark.png](https://github.com/vardanabhanot/myapi/blob/main/my-api-dev-state-dark.png)
 
 ## TODO
 
 - [ ] Comment the code well.
 - [ ] Syntax highlighting of Response.
 - [ ] Shortcut to hide the response container.
+- [X] Code generator(Base structure done and basic support for cURL and PHP added)
+- [ ] Workspace
+- [ ] Variables(Environment variables and more)
+- [ ] Collections, so that similar API endpoints could be grouped.
+- [ ] Option to be able to document endpoints.
 - [ ] Support for multipart forms.
 - [ ] Adding a Spinner, Fyne has Activity widget, but want to add a Spinner when the request is happening.
 - [X] Option to cancel the request.

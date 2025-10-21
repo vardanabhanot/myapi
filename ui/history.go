@@ -64,15 +64,24 @@ func (g *gui) renderHistoryContent() {
 			optionsStack.Objects[1].(*tappableIcon).onTapped = func() {
 				var items []*fyne.MenuItem
 				delete := fyne.NewMenuItem("Delete", func() {
-					err := core.DeleteHistory((*g.requestHistory)[i]["ID"])
+					confirmShow := dialog.NewConfirm("Delete Request", "Are you sure you want to delete this request", func(delete bool) {
+						if !delete {
+							return
+						}
 
-					if err != nil {
-						dialog.NewError(err, *g.Window)
-						return
-					}
+						err := core.DeleteHistory((*g.requestHistory)[i]["ID"])
 
-					(*g.requestHistory) = append((*g.requestHistory)[:i], (*g.requestHistory)[i+1:]...)
-					g.requestList.Refresh()
+						if err != nil {
+							dialog.NewError(err, *g.Window)
+							return
+						}
+
+						(*g.requestHistory) = append((*g.requestHistory)[:i], (*g.requestHistory)[i+1:]...)
+						g.requestList.Refresh()
+					}, (*g.Window))
+
+					confirmShow.Show()
+
 				})
 
 				items = append(items, delete)

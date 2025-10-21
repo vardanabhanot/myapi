@@ -28,7 +28,7 @@ func newTappableIcon(resource fyne.Resource, tapped func()) *tappableIcon {
 	}
 	t.icon = canvas.NewImageFromResource(resource)
 	t.icon.FillMode = canvas.ImageFillContain
-
+	t.icon.SetMinSize(fyne.NewSquareSize(50))
 	t.background = canvas.NewCircle(color.Transparent)
 
 	t.ExtendBaseWidget(t)

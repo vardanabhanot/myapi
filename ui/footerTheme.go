@@ -32,7 +32,7 @@ func (m *footerTheme) Size(name fyne.ThemeSizeName) float32 {
 		return 10
 
 	case theme.SizeNameInnerPadding:
-		return 0
+		return 1.5
 	default:
 		return theme.DefaultTheme().Size(name)
 	}
