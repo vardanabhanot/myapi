@@ -116,28 +116,74 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 	)
 
 	g.collectionTree.OnSelected = func(uid widget.TreeNodeID) {
-		defer g.collectionTree.UnselectAll()
-
 		var ci, ri int
 		if _, err := fmt.Sscanf(uid, "r:%d:%d", &ci, &ri); err != nil {
-			return // branch taps just expand
+			// Branch tap: this collection becomes the creation context for
+			// the new-request button; the highlight stays as the focus cue.
+			if _, err := fmt.Sscanf(uid, "c:%d", &ci); err == nil && ci < len(g.collections) {
+				g.focusedCollection = g.collections[ci]
+			}
+			return
 		}
+
+		defer g.collectionTree.UnselectAll()
+
 		if ci >= len(g.collections) || ri >= len(g.collections[ci].Requests) {
 			return
 		}
 
-		// Open a copy: collection entries are snapshots, so edits and sends
-		// belong to the new tab (and history), not the collection.
-		request := g.collections[ci].Requests[ri].Clone()
+		col := g.collections[ci]
+		g.focusedCollection = col
+
+		// Open as a linked tab: the copy gets its own identity (history,
+		// tab map), but sends sync back into the collection entry.
+		request := col.Requests[ri].Clone()
 		request.ID = core.NewRequestID()
 		request.IsDirty = true
 
 		tabItem := g.makeTab(request)
+		t := g.tabs[request.ID+".json"]
+		t.collection = col
+		t.colEntry = col.Requests[ri]
 		g.doctabs.Append(tabItem)
 		g.doctabs.Select(tabItem)
 	}
 
-	newBtn := widget.NewButtonWithIcon("New", theme.ContentAddIcon(), func() {
+	// New request lands in the focused collection, VS Code style; with no
+	// collection focused it is just a plain detached tab.
+	newReqBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+		col := g.validFocusedCollection()
+
+		if col == nil {
+			tabItem := g.makeTab(nil)
+			g.doctabs.Append(tabItem)
+			g.doctabs.Select(tabItem)
+			return
+		}
+
+		entry := &core.Request{Method: "GET"}
+		col.Requests = append(col.Requests, entry)
+		g.saveCollections()
+
+		for i, c := range g.collections {
+			if c == col {
+				g.collectionTree.OpenBranch(fmt.Sprintf("c:%d", i))
+				break
+			}
+		}
+		g.collectionTree.Refresh()
+
+		request := &core.Request{ID: core.NewRequestID(), Method: "GET", IsDirty: true}
+		tabItem := g.makeTab(request)
+		t := g.tabs[request.ID+".json"]
+		t.collection = col
+		t.colEntry = entry
+		g.doctabs.Append(tabItem)
+		g.doctabs.Select(tabItem)
+	})
+	newReqBtn.Importance = widget.HighImportance
+
+	newColBtn := widget.NewButtonWithIcon("", theme.FolderNewIcon(), func() {
 		nameEntry := widget.NewEntry()
 		nameEntry.SetPlaceHolder("Collection name")
 
@@ -153,11 +199,47 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 			g.collectionTree.Refresh()
 		}, *g.Window).Show()
 	})
-	newBtn.Importance = widget.HighImportance
+	newColBtn.Importance = widget.LowImportance
 
-	header := container.NewBorder(nil, nil, container.NewPadded(sectionHeader("Collections")), container.NewPadded(newBtn), nil)
+	header := container.NewBorder(nil, nil,
+		container.NewPadded(sectionHeader("Collections")),
+		container.NewPadded(container.NewHBox(newColBtn, newReqBtn)),
+		nil,
+	)
 
 	return container.NewBorder(header, nil, nil, nil, g.collectionTree)
+}
+
+// validFocusedCollection re-checks the focused collection still exists —
+// it may have been deleted since it was focused.
+func (g *gui) validFocusedCollection() *core.Collection {
+	for _, c := range g.collections {
+		if c == g.focusedCollection {
+			return c
+		}
+	}
+
+	return nil
+}
+
+// syncCollectionEntry mirrors a sent request back into its linked collection
+// entry. Called from the send goroutine after a successful request.
+func (g *gui) syncCollectionEntry(request *core.Request) {
+	t := g.tabs[request.ID+".json"]
+	if t == nil || t.collection == nil || t.colEntry == nil {
+		return
+	}
+
+	if !t.collection.UpdateRequest(t.colEntry, request) {
+		// Entry was removed from the collection while this tab was open
+		t.collection, t.colEntry = nil, nil
+		return
+	}
+
+	g.saveCollections()
+	fyne.Do(func() {
+		g.collectionTree.Refresh()
+	})
 }
 
 // addToCollectionDialog snapshots the request into a picked (or newly
@@ -166,7 +248,16 @@ func (g *gui) addToCollectionDialog(request *core.Request) {
 	var d dialog.Dialog
 
 	addTo := func(col *core.Collection) {
-		col.Requests = append(col.Requests, request.Clone())
+		entry := request.Clone()
+		col.Requests = append(col.Requests, entry)
+
+		// Like save-as: the tab now mirrors its new collection entry, so
+		// later sends keep the snapshot fresh.
+		if t := g.tabs[request.ID+".json"]; t != nil {
+			t.collection = col
+			t.colEntry = entry
+		}
+
 		g.saveCollections()
 		g.collectionTree.Refresh()
 		d.Hide()

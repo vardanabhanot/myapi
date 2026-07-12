@@ -34,6 +34,11 @@ type gui struct {
 	envList        *widget.List
 	collections    []*core.Collection
 	collectionTree *widget.Tree
+
+	// focusedCollection is the creation context for the collections tab's
+	// new-request button, VS Code style: the last collection the user
+	// selected (or opened a request from) in the tree.
+	focusedCollection *core.Collection
 	requestCtx     context.Context
 	cancelRequest  context.CancelFunc
 }
@@ -43,6 +48,8 @@ type tab struct {
 	item        *container.TabItem
 	request     *core.Request
 	bodyListner binding.DataListener
+	collection  *core.Collection // set when this tab mirrors a collection entry
+	colEntry    *core.Request    // the mirrored snapshot inside collection
 }
 
 type bindings struct {
@@ -84,6 +91,8 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 			g.tabs[deletable].bindings.time = nil
 			g.tabs[deletable].bodyListner = nil
 			g.tabs[deletable].bindings = nil
+			g.tabs[deletable].collection = nil
+			g.tabs[deletable].colEntry = nil
 			delete(g.tabs, deletable)
 		}
 
@@ -285,6 +294,10 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 					g.doctabs.Refresh()
 				})
 			}
+
+			// A tab linked to a collection entry re-syncs its snapshot on
+			// every successful send — send is this app's "save" gesture.
+			g.syncCollectionEntry(request)
 
 			// Updating the List
 			g.requestHistory = core.ListHistory()

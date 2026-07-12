@@ -7,11 +7,25 @@ import (
 
 // A collection holds snapshot copies of requests: adding or opening always
 // goes through Request.Clone, so collection entries never alias a live tab.
-// ponytail: snapshots only — in-place editing of collection requests can
-// come later if organizing alone proves insufficient.
+// Tabs opened from or saved into a collection stay linked to their entry and
+// re-sync the snapshot on every successful send (send = this app's "save").
 type Collection struct {
 	Name     string     `json:"Name"`
 	Requests []*Request `json:"Requests"`
+}
+
+// UpdateRequest overwrites the entry with a snapshot of from, but only when
+// the entry still belongs to this collection — false tells the caller its
+// link is stale (the entry was removed while a tab held it).
+func (c *Collection) UpdateRequest(entry *Request, from *Request) bool {
+	for _, r := range c.Requests {
+		if r == entry {
+			*entry = *from.Clone()
+			return true
+		}
+	}
+
+	return false
 }
 
 // Clone deep-copies a request via its JSON form. The ID is cleared; callers
