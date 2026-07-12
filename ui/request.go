@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"log"
 	"net/url"
 	"time"
@@ -36,6 +37,8 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	bindings.time = binding.BindString(&resTime)
 	bindings.body = binding.BindString(&bodyResponse)
 	bindings.headers = binding.NewStringList()
+	bindings.cookies = binding.NewStringList()
+	bindings.timings = binding.NewUntyped()
 
 	// Query options
 	if request.QueryParams == nil {
@@ -45,15 +48,18 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	fields := g.queryBlock(request.QueryParams)
 
+	queryHeading := sectionHeader("Query Parameters")
+
+	addQueryBtn := widget.NewButtonWithIcon("Add", theme.ContentAddIcon(), func() {
+		*request.QueryParams = append(*request.QueryParams, core.FormType{})
+		fields.Refresh()
+	})
+	addQueryBtn.Importance = widget.LowImportance
+
 	queryContainer := container.NewPadded(
 		container.NewBorder(
-			container.NewBorder(nil, nil, widget.NewLabel("Query Parameters"), widget.NewButton("Add Parameter", func() {
-				*request.QueryParams = append(*request.QueryParams, core.FormType{})
-				fields.Refresh()
-			}), nil),
-			nil,
-			nil,
-			nil,
+			container.NewBorder(nil, nil, queryHeading, addQueryBtn, nil),
+			nil, nil, nil,
 			fields,
 		),
 	)
@@ -70,15 +76,18 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	headerFieldss := g.headerBlock(request.Headers)
 
+	headerHeading := sectionHeader("Request Headers")
+
+	addHeaderBtn := widget.NewButtonWithIcon("Add", theme.ContentAddIcon(), func() {
+		*request.Headers = append(*request.Headers, core.FormType{Checked: true})
+		headerFieldss.Refresh()
+	})
+	addHeaderBtn.Importance = widget.LowImportance
+
 	headerContainer := container.NewPadded(
 		container.NewBorder(
-			container.NewBorder(nil, nil, widget.NewLabel("Request Headers"), widget.NewButton("Add Header", func() {
-				*request.Headers = append(*request.Headers, core.FormType{Checked: true})
-				headerFieldss.Refresh()
-			}), nil),
-			nil,
-			nil,
-			nil,
+			container.NewBorder(nil, nil, headerHeading, addHeaderBtn, nil),
+			nil, nil, nil,
 			headerFieldss,
 		),
 	)
@@ -96,8 +105,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	basicPassword := widget.NewEntry()
 	basicPassword.SetPlaceHolder("Password")
 	basicPassword.Password = true
-	basicHeading := widget.NewLabel("Basic Authentication")
-	basicHeading.TextStyle.Bold = true
+	basicHeading := sectionHeader("Basic Authentication")
 
 	if request.Auth.BasicUser != "" {
 		basicUsername.SetText(request.Auth.BasicUser)
@@ -138,8 +146,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		bearerPrefix.SetText("Bearer")
 	}
 
-	bearerHeading := widget.NewLabel("Bearer Authentication")
-	bearerHeading.TextStyle.Bold = true
+	bearerHeading := sectionHeader("Bearer Authentication")
 	bearerTokenArea := widget.NewEntry()
 	bearerTokenArea.MultiLine = true
 	bearerTokenArea.SetMinRowsVisible(5)
@@ -218,12 +225,8 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		request.BodyType = "JSON"
 	}
 
-	jsonHeading := widget.NewLabel("JSON")
-	jsonHeading.TextStyle.Bold = true
 	jsonTextArea := widget.NewEntry()
-	if request.Body.Json != "" && request.BodyType == "JSON" {
-		jsonTextArea.SetText(request.Body.Json)
-	}
+	jsonTextArea.SetText(request.Body.Json)
 
 	jsonTextArea.MultiLine = true
 	jsonTextArea.SetMinRowsVisible(5)
@@ -232,21 +235,10 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		request.Body.Json = s
 	}
 
-	bodyOptIns.json = container.NewBorder(
-		jsonHeading,
-		nil,
-		nil,
-		nil,
-		jsonTextArea,
-	)
+	bodyOptIns.json = jsonTextArea
 
-	xmlHeading := widget.NewLabel("XML")
-	xmlHeading.TextStyle.Bold = true
 	xmlTextArea := widget.NewEntry()
-
-	if request.Body.Xml != "" && request.BodyType == "XML" {
-		jsonTextArea.SetText(request.Body.Xml)
-	}
+	xmlTextArea.SetText(request.Body.Xml)
 
 	xmlTextArea.MultiLine = true
 	xmlTextArea.SetMinRowsVisible(7)
@@ -255,21 +247,10 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		request.Body.Xml = s
 	}
 
-	bodyOptIns.xml = container.NewBorder(
-		xmlHeading,
-		nil,
-		nil,
-		nil,
-		xmlTextArea,
-	)
+	bodyOptIns.xml = xmlTextArea
 
-	textHeading := widget.NewLabel("Text")
-	textHeading.TextStyle.Bold = true
 	textTextArea := widget.NewEntry()
-
-	if request.Body.Text != "" && request.BodyType == "Text" {
-		jsonTextArea.SetText(request.Body.Text)
-	}
+	textTextArea.SetText(request.Body.Text)
 
 	textTextArea.OnChanged = func(s string) {
 		request.Body.Text = s
@@ -278,13 +259,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	textTextArea.SetMinRowsVisible(7)
 	textTextArea.TextStyle.Monospace = true
 
-	bodyOptIns.text = container.NewBorder(
-		textHeading,
-		nil,
-		nil,
-		nil,
-		textTextArea,
-	)
+	bodyOptIns.text = textTextArea
 
 	if request.Body.Form == nil {
 		request.Body.Form = &[]core.FormType{}
@@ -292,17 +267,19 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	}
 
 	formFieldsBlock := g.formBlock(request.Body.Form)
-	formHeading := widget.NewLabel("Form Fields")
-	formHeading.TextStyle.Bold = true
+
+	formHeading := sectionHeader("Form Fields")
+
+	addFormBtn := widget.NewButtonWithIcon("Add", theme.ContentAddIcon(), func() {
+		*request.Body.Form = append(*request.Body.Form, core.FormType{})
+		formFieldsBlock.Refresh()
+	})
+	addFormBtn.Importance = widget.LowImportance
+
 	formContainer := container.NewPadded(
 		container.NewBorder(
-			container.NewBorder(nil, nil, formHeading, widget.NewButton("Add Field", func() {
-				*request.Body.Form = append(*request.Body.Form, core.FormType{})
-				formFieldsBlock.Refresh()
-			}), nil),
-			nil,
-			nil,
-			nil,
+			container.NewBorder(nil, nil, formHeading, addFormBtn, nil),
+			nil, nil, nil,
 			formFieldsBlock,
 		),
 	)
@@ -369,29 +346,8 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		container.NewBorder(bodyOptions, nil, nil, nil, bodyOptionView),
 	)
 
-	
-	// Code Gen Container
-	var codeContainer *fyne.Container
-	var tabs *container.ThemeOverride
-	var tabSplit *container.Split
-	var codeIconTappable *widget.Button
-	codeIconTappable = widget.NewButtonWithIcon("", theme.NewThemedResource(resourceCodeSvg), func() {
-		if codeContainer.Visible() {
-			codeContainer.Hide()
-			codeIconTappable.Importance = widget.LowImportance
-			tabSplit.Offset = 1
-			tabSplit.Refresh()
-			return
-		}
-		codeContainer.Show()
-		tabSplit.Offset = 0.6
-		codeIconTappable.Importance = widget.MediumImportance
-		codeContainer.Refresh()
-	})
-
-	codeIconTappable.Importance = widget.LowImportance
-
-	var codePreviewContainer *container.ThemeOverride
+	// Code Gen drawer
+	var codePreviewContainer *fyne.Container
 
 	languageOption := codegen.GetSupportedLanguages()
 	var codePreview *widget.TextGrid
@@ -426,32 +382,54 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		})
 	})
 
-	codePreviewContainer = container.NewThemeOverride(container.NewPadded(container.NewVBox(
+	codePreviewContainer = container.NewPadded(container.NewVBox(
 		container.NewBorder(nil, nil, nil, copyCode, languageSelect),
 		container.NewStack(
 			codeBackGround,
-			container.NewThemeOverride(
-				container.NewPadded(codePreview), &overridePaddingTheme{padding: 10})),
-	)), &overridePaddingTheme{padding: 4})
+			container.NewPadded(codePreview)),
+	))
 
-	codeContainer = container.NewBorder(widget.NewLabel("Code Generator"), nil, nil, nil, codePreviewContainer)
+	codeGenTitle := sectionHeader("Code Generator")
+
+	// Drawer on the right edge, hidden by default; the spacer fixes its width
+	drawerSpacer := canvas.NewRectangle(color.Transparent)
+	drawerSpacer.SetMinSize(fyne.NewSize(380, 0))
+	codeContainer := container.NewStack(
+		drawerSpacer,
+		container.NewBorder(nil, nil, widget.NewSeparator(), nil,
+			container.NewBorder(container.NewPadded(codeGenTitle), nil, nil, nil, codePreviewContainer),
+		),
+	)
 	codeContainer.Hide()
 
-	tabSplit = container.NewHSplit(container.NewStack(
+	var requestArea *fyne.Container
+	var codeIconTappable *widget.Button
+	codeIconTappable = widget.NewButtonWithIcon("", theme.NewThemedResource(resourceCodeSvg), func() {
+		if codeContainer.Visible() {
+			codeContainer.Hide()
+			codeIconTappable.Importance = widget.LowImportance
+		} else {
+			// Regenerate so the drawer reflects the current request state
+			languageSelect.OnChanged(languageSelect.Selected)
+			codeContainer.Show()
+			codeIconTappable.Importance = widget.MediumImportance
+		}
+		codeIconTappable.Refresh()
+		requestArea.Refresh()
+	})
+	codeIconTappable.Importance = widget.LowImportance
+
+	requestArea = container.NewBorder(nil, nil, nil, codeContainer, container.NewStack(
 		container.NewAppTabs(
-			container.NewTabItem("Query", container.NewThemeOverride(queryContainer, &overridePaddingTheme{})),
-			container.NewTabItem("Headers", container.NewThemeOverride(headerContainer, &overridePaddingTheme{})),
-			container.NewTabItem("Auth", container.NewThemeOverride(authContainer, &overridePaddingTheme{})),
-			container.NewTabItem("Body", container.NewThemeOverride(bodyContainer, &overridePaddingTheme{})),
+			container.NewTabItem("Query", queryContainer),
+			container.NewTabItem("Headers", headerContainer),
+			container.NewTabItem("Auth", authContainer),
+			container.NewTabItem("Body", bodyContainer),
 		),
 		container.NewBorder(container.NewBorder(nil, nil, nil, codeIconTappable), nil, nil, nil),
-	), codeContainer)
+	))
 
-	tabSplit.Offset = 0.6
-
-	tabs = container.NewThemeOverride(tabSplit, &overridePaddingTheme{padding: 1.5})
-
-	return container.NewBorder(nil, nil, nil, nil, tabs)
+	return requestArea
 }
 
 func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
@@ -476,7 +454,10 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 			return
 		}
 
+		// Detach callbacks before Set*: recycled rows still hold the
+		// previous row's callback, which would fire with stale indexes.
 		entry := ctx.Objects[1].(*widget.Check)
+		entry.OnChanged = nil
 		entry.SetChecked((*queries)[lii].Checked)
 		entry.OnChanged = func(b bool) {
 			(*queries)[lii].Checked = b
@@ -488,12 +469,12 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 			g.updateURL(queries)
 		}
 
-		if lii == 0 {
-			btn := ctx.Objects[2].(*widget.Button)
-			btn.Hide()
-		}
-
 		btn := ctx.Objects[2].(*widget.Button)
+		if lii == 0 {
+			btn.Hide()
+		} else {
+			btn.Show()
+		}
 		btn.OnTapped = func() {
 			*queries = append((*queries)[:lii], (*queries)[lii+1:]...)
 			list.Refresh()
@@ -501,12 +482,24 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 			g.updateURL(queries)
 		}
 
+		// Typing in the last row appends a fresh empty row
+		autoAppend := func(lii int) {
+			if lii == len(*queries)-1 {
+				*queries = append(*queries, core.FormType{Checked: true})
+				list.Refresh()
+			}
+		}
+
 		entryCtx, _ := ctx.Objects[0].(*fyne.Container)
 
 		parameter := entryCtx.Objects[0].(*widget.Entry)
+		parameter.OnChanged = nil
 		parameter.SetText((*queries)[lii].Key)
 		parameter.OnChanged = func(s string) {
 			(*queries)[lii].Key = s
+			if s != "" {
+				autoAppend(lii)
+			}
 
 			if !(*queries)[lii].Checked {
 				return
@@ -519,9 +512,13 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 			g.updateURL(queries)
 		}
 		value := entryCtx.Objects[1].(*widget.Entry)
+		value.OnChanged = nil
 		value.SetText((*queries)[lii].Value)
 		value.OnChanged = func(s string) {
 			(*queries)[lii].Value = s
+			if s != "" {
+				autoAppend(lii)
+			}
 
 			if !(*queries)[lii].Checked {
 				return
@@ -531,14 +528,19 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 		}
 	})
 
+	g.queryList = list // urlInput.OnChanged refreshes it after syncing rows
 	return list
 }
 
 func (g *gui) updateURL(queries *[]core.FormType) {
+	if g.urlInput.Text == "" {
+		return
+	}
+
 	params := url.Values{}
 
 	for _, q := range *queries {
-		if q.Checked {
+		if q.Checked && q.Key != "" {
 			params.Add(q.Key, q.Value)
 		}
 	}
@@ -550,13 +552,43 @@ func (g *gui) updateURL(queries *[]core.FormType) {
 		return
 	}
 
-	if len(params) < 1 {
-		g.urlInput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path)
-		//g.urlInput.Refresh()
-		return
+	base := parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path
+	if len(params) > 0 {
+		base += "?" + params.Encode()
 	}
 
-	g.urlInput.SetText(parsedURL.Scheme + "://" + parsedURL.Host + parsedURL.Path + "?" + params.Encode())
+	// guard: the query tab is the source of truth here, don't let the
+	// URL OnChanged sync mutate the rows being edited
+	g.syncingQuery = true
+	g.urlInput.SetText(base)
+	g.syncingQuery = false
+}
+
+// syncQueryParams merges the query string of a hand-edited URL into the
+// query tab rows: updates values for existing keys, re-checks rows the URL
+// re-added, drops checked rows no longer in the URL, keeps unchecked rows
+// (they only live in the tab), and keeps a trailing empty row for typing.
+func syncQueryParams(rows *[]core.FormType, values url.Values) {
+	kept := (*rows)[:0]
+	for _, r := range *rows {
+		if r.Key == "" {
+			continue // empty rows are re-added below
+		}
+		if v, inURL := values[r.Key]; inURL {
+			r.Value = v[0]
+			r.Checked = true
+			kept = append(kept, r)
+			delete(values, r.Key)
+		} else if !r.Checked {
+			kept = append(kept, r)
+		}
+	}
+
+	for key, v := range values {
+		kept = append(kept, core.FormType{Checked: true, Key: key, Value: v[0]})
+	}
+
+	*rows = append(kept, core.FormType{Checked: true})
 }
 
 func (g *gui) headerBlock(headers *[]core.FormType) fyne.CanvasObject {
@@ -577,7 +609,11 @@ func (g *gui) headerBlock(headers *[]core.FormType) fyne.CanvasObject {
 		)
 	}, func(lii widget.ListItemID, co fyne.CanvasObject) {
 		ctx, _ := co.(*fyne.Container)
+
+		// Detach callbacks before Set*: recycled rows still hold the
+		// previous row's callback, which would fire with stale indexes.
 		entry := ctx.Objects[1].(*widget.Check)
+		entry.OnChanged = nil
 		entry.SetChecked((*headers)[lii].Checked)
 		entry.OnChanged = func(b bool) {
 			(*headers)[lii].Checked = b
@@ -589,18 +625,34 @@ func (g *gui) headerBlock(headers *[]core.FormType) fyne.CanvasObject {
 			list.Refresh()
 		}
 
+		// Typing in the last row appends a fresh empty row
+		autoAppend := func(lii int) {
+			if lii == len(*headers)-1 {
+				*headers = append(*headers, core.FormType{Checked: true})
+				list.Refresh()
+			}
+		}
+
 		entryCtx, _ := ctx.Objects[0].(*fyne.Container)
 
 		parameter := entryCtx.Objects[0].(*widget.Entry)
+		parameter.OnChanged = nil
 		parameter.SetText((*headers)[lii].Key)
 		parameter.OnChanged = func(s string) {
 			(*headers)[lii].Key = s
+			if s != "" {
+				autoAppend(lii)
+			}
 		}
 
 		value := entryCtx.Objects[1].(*widget.Entry)
+		value.OnChanged = nil
 		value.SetText((*headers)[lii].Value)
 		value.OnChanged = func(s string) {
 			(*headers)[lii].Value = s
+			if s != "" {
+				autoAppend(lii)
+			}
 		}
 	})
 
@@ -625,7 +677,11 @@ func (g *gui) formBlock(fields *[]core.FormType) fyne.CanvasObject {
 		)
 	}, func(lii widget.ListItemID, co fyne.CanvasObject) {
 		ctx, _ := co.(*fyne.Container)
+
+		// Detach callbacks before Set*: recycled rows still hold the
+		// previous row's callback, which would fire with stale indexes.
 		entry := ctx.Objects[1].(*widget.Check)
+		entry.OnChanged = nil
 		entry.SetChecked((*fields)[lii].Checked)
 		entry.OnChanged = func(b bool) {
 			(*fields)[lii].Checked = b
@@ -637,18 +693,34 @@ func (g *gui) formBlock(fields *[]core.FormType) fyne.CanvasObject {
 			list.Refresh()
 		}
 
+		// Typing in the last row appends a fresh empty row
+		autoAppend := func(lii int) {
+			if lii == len(*fields)-1 {
+				*fields = append(*fields, core.FormType{Checked: true})
+				list.Refresh()
+			}
+		}
+
 		entryCtx, _ := ctx.Objects[0].(*fyne.Container)
 
 		parameter := entryCtx.Objects[0].(*widget.Entry)
+		parameter.OnChanged = nil
 		parameter.SetText((*fields)[lii].Key)
 		parameter.OnChanged = func(s string) {
 			(*fields)[lii].Key = s
+			if s != "" {
+				autoAppend(lii)
+			}
 		}
 
 		value := entryCtx.Objects[1].(*widget.Entry)
+		value.OnChanged = nil
 		value.SetText((*fields)[lii].Value)
 		value.OnChanged = func(s string) {
 			(*fields)[lii].Value = s
+			if s != "" {
+				autoAppend(lii)
+			}
 		}
 	})
 

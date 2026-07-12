@@ -3,10 +3,9 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"image/color"
 	"net/url"
-	"time"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -24,11 +23,17 @@ type gui struct {
 	Window *fyne.Window
 
 	urlInput       *widget.Entry
+	queryList      *widget.List
+	syncingQuery   bool // true while updateURL writes the URL entry
 	tabs           map[string]*tab
 	doctabs        *container.DocTabs
 	sidebar        *fyne.Container
 	requestHistory *[]map[string]string
 	requestList    *widget.List
+	envStore       *core.EnvStore
+	envList        *widget.List
+	collections    []*core.Collection
+	collectionTree *widget.Tree
 	requestCtx     context.Context
 	cancelRequest  context.CancelFunc
 }
@@ -42,10 +47,12 @@ type tab struct {
 
 type bindings struct {
 	headers binding.StringList
+	cookies binding.StringList
 	body    binding.String
 	status  binding.String
 	size    binding.String
 	time    binding.String
+	timings binding.Untyped // holds core.Timings for the waterfall popup
 }
 
 func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
@@ -71,7 +78,9 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 			g.tabs[deletable].bindings.body.RemoveListener(g.tabs[deletable].bodyListner)
 			g.tabs[deletable].bindings.body = nil
 			g.tabs[deletable].bindings.headers = nil
+			g.tabs[deletable].bindings.cookies = nil
 			g.tabs[deletable].bindings.status = nil
+			g.tabs[deletable].bindings.timings = nil
 			g.tabs[deletable].bindings.time = nil
 			g.tabs[deletable].bodyListner = nil
 			g.tabs[deletable].bindings = nil
@@ -108,7 +117,7 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 	}
 
 	g.sidebar = g.makeSideBar()
-	baseView := NewHSplit(g.sidebar, container.NewThemeOverride(g.doctabs, &overridePaddingTheme{padding: 1.5}))
+	baseView := NewHSplit(g.sidebar, g.doctabs)
 	baseView.Offset = 0.22
 
 	footerSeperator := widget.NewSeparator()
@@ -131,9 +140,7 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 	if request == nil {
-		// Tab ID is the id which is the time a tab is created
-		tabID := fmt.Sprintf("%d", time.Now().Unix())
-		request = &core.Request{ID: tabID, Method: "GET", IsDirty: true}
+		request = &core.Request{ID: core.NewRequestID(), Method: "GET", IsDirty: true}
 	}
 
 	// Pushing the tab item to the open tab map
@@ -151,65 +158,19 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		request.URL = s
 		request.IsDirty = true
 
-		// Handling, query input blocks get added and deleted when
-		// when query params gets added/removed directly to the URL input
-		// Making query blocks and url input be 2 way binding.
-		if parsedURL, err := url.Parse(request.URL); err == nil {
-			parameters := parsedURL.Query()
-
-			if len(parameters) > 0 && len(*request.QueryParams) > 0 {
-				for i, params := range *request.QueryParams {
-					if params.Value == "" || params.Key == "" {
-						*request.QueryParams = append((*request.QueryParams)[:i], (*request.QueryParams)[i+1:]...)
-						continue
-					}
-
-					if params.Checked && params.Key != "" && len(parameters[params.Key]) != 0 {
-						if len(parameters[params.Key]) == 1 {
-							*request.QueryParams = nil
-							continue
-						}
-						*request.QueryParams = append((*request.QueryParams)[:i], (*request.QueryParams)[i+1:]...)
-						continue
-					}
+		// Sync URL query params into the query tab — but not when the
+		// change came from the query tab itself (updateURL), which would
+		// mutate the rows the user is typing into.
+		if !g.syncingQuery {
+			if parsedURL, err := url.Parse(s); err == nil {
+				syncQueryParams(request.QueryParams, parsedURL.Query())
+				if g.queryList != nil {
+					g.queryList.Refresh()
 				}
-			}
-
-			for key, value := range parameters {
-				if value[0] != "" {
-					var skipAppend bool = false
-					for i, params := range *request.QueryParams {
-						if params.Key == "" {
-							(*request.QueryParams)[i].Key = key
-							(*request.QueryParams)[i].Value = value[0]
-							(*request.QueryParams)[i].Checked = true
-							skipAppend = true
-							break
-						} else if params.Key == key {
-							(*request.QueryParams)[i].Value = value[0]
-							(*request.QueryParams)[i].Checked = true
-							skipAppend = true
-							break
-						} else if params.Value == "" && params.Key != "" {
-							*request.QueryParams = append((*request.QueryParams)[:i], (*request.QueryParams)[i+1:]...)
-							skipAppend = true
-							break
-						}
-					}
-					if !skipAppend {
-						*request.QueryParams = append(*request.QueryParams, core.FormType{Checked: true, Key: key, Value: value[0]})
-					}
-				}
-
 			}
 		}
 
-		if s == "" {
-			s = "New Request"
-		} else {
-			s = maybTruncateURL(s)
-		}
-
+		s = tabTitle(request.Method, s)
 		if request.IsDirty {
 			s += " *"
 		}
@@ -221,10 +182,20 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 	requestType := widget.NewSelect([]string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}, func(value string) {
 		request.Method = value
+
+		// Keep the tab title's method prefix in sync; only when this tab
+		// is the selected one (SetSelected also fires during makeTab)
+		if t := g.tabs[request.ID+".json"]; t != nil && t.item != nil && g.doctabs.Selected() == t.item {
+			title := tabTitle(value, request.URL)
+			if request.IsDirty {
+				title += " *"
+			}
+			t.item.Text = title
+			g.doctabs.Refresh()
+		}
 	})
 
 	requestType.SetSelected(request.Method)
-	//requestType.Resize(fyne.NewSize(10, 40))
 
 	var makeRequest *widget.Button
 	makeRequest = widget.NewButton("Send", func() {
@@ -238,12 +209,15 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		// Create a cancelable context
 		g.requestCtx, g.cancelRequest = context.WithCancel(context.Background())
 
-		//makeRequest.Disable()
 		makeRequest.SetText("Cancel")
+		makeRequest.Importance = widget.DangerImportance
+		makeRequest.Refresh()
 
 		go func(ctx context.Context) {
 			defer fyne.Do(func() {
 				makeRequest.SetText("Send")
+				makeRequest.Importance = widget.HighImportance
+				makeRequest.Refresh()
 				g.cancelRequest = nil
 			})
 
@@ -271,24 +245,41 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 				res.Body = "Head Request do not have a body"
 			}
 
-			bindings.body.Set(res.Body)
+			// Cap what we keep: the binding holds the body for the tab's
+			// whole lifetime, and copy/raw only ever need this much.
+			// ponytail: 2MB cap; stream-to-file if full downloads matter.
+			const maxRetainedBody = 2 << 20
+			if len(res.Body) > maxRetainedBody {
+				res.Body = safeCut(res.Body, maxRetainedBody) + "\n\n... [Truncated: kept the first 2 MB of " + res.Size + "]"
+			}
 
 			var headers []string
 			for name, value := range res.Headers {
 				headers = append(headers, name+"||"+value)
 			}
 
+			var cookies []string
+			for _, c := range res.Cookies {
+				// name in col 0, value + attributes (Path, Expires, ...) in col 1
+				cookies = append(cookies, c.Name+"||"+strings.TrimPrefix(c.String(), c.Name+"="))
+			}
+
+			// Headers before body: the body listener reads Content-Type
+			// from the headers binding to pick syntax highlighting.
 			bindings.headers.Set(headers)
+			bindings.cookies.Set(cookies)
+			bindings.body.Set(res.Body)
 			bindings.size.Set(res.Size)
 			bindings.status.Set(res.Status)
 			bindings.time.Set(res.Duration.Abs().String())
+			bindings.timings.Set(res.Timings)
 
 			res.Body = ""
 
 			// To update the current tab text as if it is dirty it set a *
 			if request.IsDirty {
 				request.IsDirty = false
-				g.doctabs.Selected().Text = maybTruncateURL(g.urlInput.Text)
+				g.doctabs.Selected().Text = tabTitle(request.Method, request.URL)
 
 				fyne.Do(func() {
 					g.doctabs.Refresh()
@@ -314,23 +305,28 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		makeRequest.Tapped(&fyne.PointEvent{})
 	}
 
-	//statusDataLabel := widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.status)
-	requestAction := container.NewPadded(container.NewBorder(nil, nil, requestType, makeRequest, g.urlInput))
-	responseMetaData := container.NewHBox(
-		widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.status),
-		widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.size),
-		widget.NewLabelWithData(g.tabs[request.ID+".json"].bindings.time),
-	)
+	addToColBtn := widget.NewButtonWithIcon("", theme.FolderNewIcon(), func() {
+		g.addToCollectionDialog(request)
+	})
+	addToColBtn.Importance = widget.LowImportance
 
-	requestMetaFloat := container.NewBorder(nil, nil, nil, responseMetaData, nil)
-	requestResponseContainer := container.NewStack(requestUI, NewResponseContainer(container.NewStack(response, requestMetaFloat)))
+	// One visually fused bar: method + URL + save-to-collection + Send
+	// share a rounded background
+	urlBarBg := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
+	urlBarBg.CornerRadius = 6
+	requestAction := container.NewPadded(container.NewStack(
+		urlBarBg,
+		container.NewBorder(nil, nil, requestType, container.NewHBox(addToColBtn, makeRequest), g.urlInput),
+	))
 
-	tabName := "New Request *"
-	if request.URL != "" {
-		tabName = maybTruncateURL(request.URL)
+	requestResponseContainer := container.NewStack(requestUI, response)
+
+	tabName := tabTitle(request.Method, request.URL)
+	if request.URL == "" {
+		tabName += " *"
 	}
 
-	tabItem := container.NewTabItem(tabName, container.NewThemeOverride(container.NewBorder(requestAction, nil, nil, nil, requestResponseContainer), &overridePaddingTheme{}))
+	tabItem := container.NewTabItem(tabName, container.NewBorder(requestAction, nil, nil, nil, requestResponseContainer))
 
 	g.tabs[request.ID+".json"].item = tabItem
 
@@ -339,61 +335,64 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 func (g *gui) makeSideBar() *fyne.Container {
 
-	newRequestButton := container.NewPadded(widget.NewButton("New", func() {
+	newRequestBtn := widget.NewButtonWithIcon("New", theme.ContentAddIcon(), func() {
 		newTab := g.makeTab(nil)
 		g.doctabs.Append(newTab)
 		g.doctabs.Select(newTab)
-	}))
-
-	// newCollectionBtn := container.NewPadded(widget.NewButton("New", func() {
-
-	// }))
+	})
+	newRequestBtn.Importance = widget.HighImportance
+	newRequestButton := container.NewPadded(newRequestBtn)
 
 	g.requestHistory = core.ListHistory()
 	g.renderHistoryContent()
 
 	rightBorder := canvas.NewLine(theme.Color(theme.ColorNameSeparator))
-	rightBorder.StrokeWidth = 0.3
+	rightBorder.StrokeWidth = 1.0
 
-	sideBarLabel := widget.NewLabel("History")
-	sideBarLabel.TextStyle.Bold = true
+	sideBarLabel := sectionHeader("History")
 
-	collections := widget.NewTree(
-		func(tni widget.TreeNodeID) []widget.TreeNodeID {
-			switch tni {
-			case "":
-				return []widget.TreeNodeID{"a", "b", "c"}
+	searchEntry := widget.NewEntry()
+	searchEntry.SetPlaceHolder("Search history")
+	searchEntry.OnChanged = func(s string) {
+		g.filterHistory(s)
+	}
+
+	clearAllBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+		dialog.NewConfirm("Clear History", "Delete all request history? This cannot be undone.", func(confirmed bool) {
+			if !confirmed {
+				return
 			}
-			return []string{}
-		}, func(tni widget.TreeNodeID) bool {
-			return tni == "" || tni == "a"
-		}, func(b bool) fyne.CanvasObject {
-			if b {
-				return widget.NewLabel("Branch template")
+
+			if err := core.ClearHistory(); err != nil {
+				dialog.NewError(err, *g.Window).Show()
+				return
 			}
-			return widget.NewLabel("Leaf template")
-		}, func(tni widget.TreeNodeID, b bool, co fyne.CanvasObject) {
-			text := tni
-			if b {
-				text += " (branch)"
-			}
-			co.(*widget.Label).SetText(text)
-		},
+
+			g.requestHistory = core.ListHistory()
+			g.requestList.Refresh()
+		}, *g.Window).Show()
+	})
+	clearAllBtn.Importance = widget.LowImportance
+
+	sideBarHeader := container.NewBorder(nil, nil, container.NewPadded(sideBarLabel), container.NewHBox(clearAllBtn, newRequestButton), nil)
+	historyTabContent := container.NewBorder(
+		container.NewVBox(sideBarHeader, container.NewPadded(searchEntry)),
+		nil, nil, nil,
+		g.requestList,
 	)
+	collectionTabContent := g.makeCollectionContent()
+	envTabContent := g.makeEnvContent()
 
-	sideBarHeader := container.NewBorder(nil, nil, sideBarLabel, newRequestButton, nil)
-	historyTabContent := container.NewBorder(sideBarHeader, nil, nil, nil, g.requestList)
-	collectionTabContent := container.NewBorder(nil, nil, nil, nil, collections)
-	envTabContent := container.NewBorder(widget.NewLabel("Environment"), nil, nil, nil)
-	
-	// Sidebar Icon tabs active state
-	// TODO:: will need to make a custom widget to handle this
-	historyTabActive := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
-	historyTabActive.CornerRadius = 7
-	collectionTabActive := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
-	collectionTabActive.CornerRadius = 7
-	envTabActive := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
-	envTabActive.CornerRadius = 7
+	// Active state: a primary-coloured left accent bar, more visible than a grey background
+	historyTabActive := canvas.NewRectangle(theme.Color(theme.ColorNamePrimary))
+	historyTabActive.CornerRadius = 2
+	historyTabActive.SetMinSize(fyne.NewSize(3, 0))
+	collectionTabActive := canvas.NewRectangle(theme.Color(theme.ColorNamePrimary))
+	collectionTabActive.CornerRadius = 2
+	collectionTabActive.SetMinSize(fyne.NewSize(3, 0))
+	envTabActive := canvas.NewRectangle(theme.Color(theme.ColorNamePrimary))
+	envTabActive.CornerRadius = 2
+	envTabActive.SetMinSize(fyne.NewSize(3, 0))
 
 	// History is the default tab so it will stay active on startup
 	collectionTabActive.Hide()
@@ -416,7 +415,8 @@ func (g *gui) makeSideBar() *fyne.Container {
 	})
 
 	historyTab.Importance = widget.LowImportance
-	historyTabIconWrap := container.NewStack(historyTabActive, historyTab)
+	// Active indicator: a 3px primary-coloured strip on the LEFT of the icon
+	historyTabIconWrap := container.NewBorder(nil, nil, historyTabActive, nil, historyTab)
 
 	collectionTab := widget.NewButtonWithIcon("", theme.FolderIcon(), func() {
 		collectionTabContent.Show()
@@ -434,7 +434,7 @@ func (g *gui) makeSideBar() *fyne.Container {
 
 	})
 	collectionTab.Importance = widget.LowImportance
-	collectionTabIconWrap := container.NewStack(collectionTabActive, collectionTab)
+	collectionTabIconWrap := container.NewBorder(nil, nil, collectionTabActive, nil, collectionTab)
 
 	envTab := widget.NewButtonWithIcon("", theme.ComputerIcon(), func() {
 		envTabContent.Show()
@@ -452,18 +452,47 @@ func (g *gui) makeSideBar() *fyne.Container {
 
 	})
 	envTab.Importance = widget.LowImportance
-	envTabIconWrap := container.NewStack(envTabActive, envTab)
+	envTabIconWrap := container.NewBorder(nil, nil, envTabActive, nil, envTab)
 
 	shortCutIcon := widget.NewIcon(theme.NewThemedResource(resourceKeyboardSvg))
 	shortcutsButton := widget.NewButtonWithIcon("", shortCutIcon.Resource, func() {
-		keyboardShortcuts := widget.NewModalPopUp(widget.NewLabel("Keyboard Shortcuts"), (*g.Window).Canvas())
-		keyboardShortcuts.Show()
+		shortcutsTitle := canvas.NewText("Keyboard Shortcuts", theme.Color(theme.ColorNameForeground))
+		shortcutsTitle.TextSize = 14
+		shortcutsTitle.TextStyle.Bold = true
 
-		time.AfterFunc(3*time.Second, func() {
-			fyne.Do(func() {
-				keyboardShortcuts.Hide()
-			})
-		})
+		type shortcut struct{ keys, action string }
+		shortcuts := []shortcut{
+			{"Enter", "Send request"},
+			{"Ctrl + T", "New tab (planned)"},
+			{"Ctrl + W", "Close tab (planned)"},
+		}
+
+		rows := container.NewVBox()
+		for _, s := range shortcuts {
+			keyLabel := canvas.NewText(s.keys, theme.Color(theme.ColorNamePrimary))
+			keyLabel.TextStyle.Monospace = true
+			keyLabel.TextSize = 12
+			actionLabel := widget.NewLabel(s.action)
+			row := container.NewBorder(nil, nil, nil, actionLabel, keyLabel)
+			rows.Add(row)
+			rows.Add(widget.NewSeparator())
+		}
+
+		content := container.NewVBox(
+			shortcutsTitle,
+			widget.NewSeparator(),
+			rows,
+		)
+
+		closeBtn := widget.NewButton("Close", nil)
+		var popup *widget.PopUp
+		closeBtn.OnTapped = func() { popup.Hide() }
+		closeBtn.Importance = widget.LowImportance
+
+		popupContent := container.NewBorder(nil, container.NewPadded(closeBtn), nil, nil, container.NewPadded(content))
+		popup = widget.NewModalPopUp(popupContent, (*g.Window).Canvas())
+		popup.Resize(fyne.NewSize(340, 0))
+		popup.Show()
 	})
 
 	shortcutsButton.Importance = widget.LowImportance
@@ -519,12 +548,32 @@ func methodColor(method string) *color.RGBA {
 	}
 }
 
-func maybTruncateURL(url string) string {
-	if len(url) > 20 {
-		tabRune := []rune(url)
-		url = string(tabRune[0:20])
-		url += "..."
+// sectionHeader is the one style used for every small section label
+func sectionHeader(text string) *canvas.Text {
+	t := canvas.NewText(text, theme.Color(theme.ColorNameDisabled))
+	t.TextSize = 11
+	t.TextStyle.Bold = true
+	return t
+}
+
+// tabTitle renders a tab as "GET /users" instead of a truncated raw URL
+func tabTitle(method, rawURL string) string {
+	if rawURL == "" {
+		return "New Request"
 	}
 
-	return url
+	label := rawURL
+	if u, err := url.Parse(rawURL); err == nil {
+		if u.Path != "" && u.Path != "/" {
+			label = u.Path
+		} else if u.Host != "" {
+			label = u.Host
+		}
+	}
+
+	if r := []rune(label); len(r) > 22 {
+		label = string(r[:22]) + "…"
+	}
+
+	return method + " " + label
 }

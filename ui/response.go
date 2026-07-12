@@ -1,57 +1,131 @@
 package ui
 
 import (
+	"image/color"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/vardanabhanot/myapi/core"
 )
 
-func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
-	bindings := g.tabs[request.ID+".json"].bindings
-	bodyString, _ := bindings.body.Get()
-	responseTab := widget.NewTextGridFromString(bodyString)
-	responseTab.Scroll = fyne.ScrollBoth
-	responseTab.ShowLineNumbers = true
-	responseTab.ShowWhitespace = true
+// safeCut truncates s to at most max bytes without splitting a rune.
+func safeCut(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
+}
 
-	headerMap, _ := bindings.headers.Get()
-	var headerTable *widget.Table
-	headerTable = widget.NewTable(
+// softWrap breaks lines longer than max characters. TextGrid allocates
+// 3 canvas objects per column of the *longest* line for every visible row,
+// so a single minified 50k-char HTML/JSON line freezes the UI.
+func softWrap(s string) string {
+	const max = softWrapCols
+	if len(s) <= max {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + len(s)/max + 1)
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		for len(line) > max {
+			cut := max
+			for cut > max-utf8.UTFMax && !utf8.RuneStart(line[cut]) {
+				cut-- // don't split a multi-byte rune
+			}
+			b.WriteString(line[:cut])
+			b.WriteByte('\n')
+			line = line[cut:]
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+// keyValueTable renders a StringList of "key||value" rows as a two-column
+// table, growing row heights to fit wrapped values (Table never grows rows
+// on its own, so long values would overflow the rows below).
+func keyValueTable(list binding.StringList) *widget.Table {
+	rows, _ := list.Get()
+	var table *widget.Table
+	rowHeights := map[int]float32{}
+	table = widget.NewTable(
 		func() (int, int) {
-			return len(headerMap), 2
+			return len(rows), 2
 		},
 		func() fyne.CanvasObject {
-			return widget.NewLabel("wide content")
+			l := widget.NewLabel("wide content")
+			l.Wrapping = fyne.TextWrapWord
+			return l
 		},
 		func(i widget.TableCellID, o fyne.CanvasObject) {
-			rows := [][]string{}
-			for _, b := range headerMap {
-				row := strings.Split(b, "||")
-				rows = append(rows, row)
+			key, value, _ := strings.Cut(rows[i.Row], "||")
+			l := o.(*widget.Label)
+			if i.Col == 0 {
+				l.SetText(key)
+			} else {
+				l.SetText(value)
 			}
 
-			l := o.(*widget.Label)
-			l.SetText(rows[i.Row][i.Col])
-			l.Wrapping = fyne.TextWrapWord
-			headerTable.SetColumnWidth(1, headerTable.Size().Width*0.73) // updating the column width when screen minimizes or vice versa
+			valueWidth := float32(550)
+			if w := table.Size().Width; w > 0 {
+				valueWidth = w * 0.73
+				table.SetColumnWidth(1, valueWidth) // track window resizes
+			}
+
+			// measure the wrapped value text and grow the row to fit
+			m := widget.NewLabel(value)
+			m.Wrapping = fyne.TextWrapWord
+			m.Resize(fyne.NewSize(valueWidth, 0))
+			if h := m.MinSize().Height; h != rowHeights[i.Row] {
+				rowHeights[i.Row] = h
+				table.SetRowHeight(i.Row, h)
+			}
 		},
 	)
 
-	headerTable.SetColumnWidth(0, 200)
-	headerTable.SetColumnWidth(1, 550)
+	table.SetColumnWidth(0, 200)
+	table.SetColumnWidth(1, 550)
+
+	list.AddListener(binding.NewDataListener(func() {
+		rows, _ = list.Get()
+		rowHeights = map[int]float32{}
+		table.Refresh()
+	}))
+
+	return table
+}
+
+func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
+	bindings := g.tabs[request.ID+".json"].bindings
+	bodyString, _ := bindings.body.Get()
+	responseTab := widget.NewTextGridFromString(softWrap(bodyString))
+	responseTab.Scroll = fyne.ScrollBoth
+	responseTab.ShowLineNumbers = true
+	responseTab.ShowWhitespace = true // toggle available in toolbar
+
+	headerMap, _ := bindings.headers.Get() // render() reads Content-Type from it
+	headerTable := keyValueTable(bindings.headers)
+	cookieTable := keyValueTable(bindings.cookies)
 
 	// Copy Icon to copy the whole response to the clipboard
 	// Gets updated to a check icon when clicked, for better visual feedback
 	var copyIcon *tappableIcon
 	copyIcon = newTappableIcon(theme.ContentCopyIcon(), func() {
-		fyne.CurrentApp().Clipboard().SetContent(responseTab.Text())
+		original, _ := bindings.body.Get() // not responseTab.Text(): that contains soft-wrap newlines
+		fyne.CurrentApp().Clipboard().SetContent(original)
 		copyIcon.icon.Resource = theme.ConfirmIcon()
 		copyIcon.Refresh()
 
@@ -62,60 +136,202 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 			})
 		})
 	})
-
 	copyIcon.Hide()
 
-	// To position the icon correctly at top right we need to place it in nested Border container.
-	var copyIconWrapper *fyne.Container
-	copyIconWrapper = container.NewBorder(
-		container.NewBorder(
-			layout.NewSpacer(),
-			nil,
-			layout.NewSpacer(),
-			copyIcon),
-		nil, nil, nil,
-	)
+	// Whitespace toggle button
+	var wsToggle *widget.Button
+	wsToggle = widget.NewButtonWithIcon("", theme.VisibilityIcon(), func() {
+		responseTab.ShowWhitespace = !responseTab.ShowWhitespace
+		if responseTab.ShowWhitespace {
+			wsToggle.SetIcon(theme.VisibilityIcon())
+		} else {
+			wsToggle.SetIcon(theme.VisibilityOffIcon())
+		}
+		responseTab.Refresh()
+	})
+	wsToggle.Importance = widget.LowImportance
+	wsToggle.Hide()
 
-	tabs := container.NewThemeOverride(container.NewAppTabs(
-		container.NewTabItem(
-			"Response",
-			container.NewThemeOverride(
-				container.NewStack(responseTab, copyIconWrapper),
-				&overridePaddingTheme{}),
-		),
-		container.NewTabItem("Headers", container.NewThemeOverride(headerTable, &overridePaddingTheme{})),
-		//container.NewTabItem("Cookies", widget.NewLabel("Cookies here")),
-	), &overridePaddingTheme{padding: 1.5})
+	// Status pill: coloured background, green 2xx, yellow 3xx, red 4xx/5xx
+	statusText := canvas.NewText("", color.White)
+	statusText.TextStyle.Bold = true
+	statusText.TextSize = 12
+	pillBg := canvas.NewRectangle(theme.Color(theme.ColorNameSuccess))
+	pillBg.CornerRadius = 10
+	statusPill := container.NewStack(pillBg, container.NewPadded(statusText))
+	statusPill.Hide()
+	bindings.status.AddListener(binding.NewDataListener(func() {
+		s, _ := bindings.status.Get()
+		if s == "" {
+			return
+		}
+		statusText.Text = s
+		pillBg.FillColor = theme.Color(theme.ColorNameSuccess)
+		switch s[0] {
+		case '3':
+			pillBg.FillColor = theme.Color(theme.ColorNameWarning)
+		case '4', '5':
+			pillBg.FillColor = theme.Color(theme.ColorNameError)
+		}
+		statusPill.Show()
+		statusPill.Refresh()
+	}))
+
+	// No ThemeOverride wrapper: each ThemeOverride mints a fresh font-cache
+	// scope on every apply/refresh and Fyne never evicts it, so wrapping
+	// refreshing widgets leaks font faces (the response area refreshes on
+	// every request). Padding comes from the global theme instead.
+	tabs := container.NewAppTabs(
+		container.NewTabItem("Response", responseTab),
+		container.NewTabItem("Headers", headerTable),
+		container.NewTabItem("Cookies", cookieTable),
+	)
 
 	bindings.headers.AddListener(binding.NewDataListener(func() {
 		headerMap, _ = bindings.headers.Get()
 	}))
 
 	var responsePlaceholder *fyne.Container
-	responsePlaceholder = container.NewBorder(widget.NewLabel("Response"), nil, nil, nil, container.NewCenter(widget.NewLabel("Make a request to see a response here")))
+	emptyIcon := widget.NewIcon(theme.UploadIcon())
+	emptyTitle := canvas.NewText("No Response Yet", theme.Color(theme.ColorNameForeground))
+	emptyTitle.TextSize = 15
+	emptyTitle.TextStyle.Bold = true
+	emptyTitle.Alignment = fyne.TextAlignCenter
+	emptySubtitle := canvas.NewText("Send a request to see the response here", theme.Color(theme.ColorNameDisabled))
+	emptySubtitle.TextSize = 11
+	emptySubtitle.Alignment = fyne.TextAlignCenter
+	emptyState := container.NewCenter(
+		container.NewVBox(
+			container.NewCenter(emptyIcon),
+			container.NewCenter(emptyTitle),
+			container.NewCenter(emptySubtitle),
+		),
+	)
+	responsePlaceholder = emptyState
 
-	var responseBodyString string
-	g.tabs[request.ID+".json"].bodyListner = binding.NewDataListener(func() {
-		responseBodyString, _ = bindings.body.Get()
+	showRaw := false
+	var rawToggle *widget.Button
 
-		// We dont want to do anything if the binding has just been initialized
+	render := func() {
+		responseBodyString, _ := bindings.body.Get()
+
+		// If empty, clear the TextGrid to free memory and return
 		if responseBodyString == "" {
+			responseTab.SetText("")
 			return
+		}
+
+		// Display cap: highlighted TextGrid rows cost far more than raw bytes
+		// (a TextGridCell per rune plus a style pointer), so keep this modest.
+		// Copy always returns the full retained body.
+		const maxDisplayChars = 150_000
+		if len(responseBodyString) > maxDisplayChars {
+			responseBodyString = safeCut(responseBodyString, maxDisplayChars) + "\n\n... [Display truncated to keep the UI responsive. Copy returns the full retained body.]"
 		}
 
 		responsePlaceholder.Hide()
 		tabs.Show()
 
-		responseTab.SetText(responseBodyString)
+		if showRaw {
+			responseTab.SetText(softWrap(responseBodyString))
+		} else {
+			var contentType string
+			for _, h := range headerMap {
+				if k, v, ok := strings.Cut(h, "||"); ok && strings.EqualFold(k, "Content-Type") {
+					contentType = v
+					break
+				}
+			}
 
-		if responseBodyString != "No response yet" && responseBodyString != "" {
-			copyIcon.Show()
+			lang := detectLang(contentType, responseBodyString)
+			display := formatBody(responseBodyString, lang)
+			if rows := highlightGridRows(display, lang); rows != nil {
+				responseTab.Rows = rows
+				responseTab.Refresh()
+			} else {
+				responseTab.SetText(softWrap(display))
+			}
 		}
-	})
 
+		copyIcon.Show()
+		wsToggle.Show()
+		rawToggle.Show()
+	}
+
+	rawToggle = widget.NewButton("Raw", func() {
+		showRaw = !showRaw
+		if showRaw {
+			rawToggle.Importance = widget.HighImportance
+		} else {
+			rawToggle.Importance = widget.LowImportance
+		}
+		rawToggle.Refresh()
+		render()
+	})
+	rawToggle.Importance = widget.LowImportance
+	rawToggle.Hide()
+
+	g.tabs[request.ID+".json"].bodyListner = binding.NewDataListener(render)
 	bindings.body.AddListener(g.tabs[request.ID+".json"].bodyListner)
 
 	tabs.Hide()
 	stackedTabs := container.NewStack(responsePlaceholder, tabs)
-	return container.NewBorder(nil, nil, nil, nil, container.NewBorder(nil, nil, nil, nil, stackedTabs))
+
+	// Meta + actions share the tab-header row: floated top-right over the
+	// AppTabs bar so the response area only has one header row.
+	// Collapse toggle hides the body so only that row stays visible.
+	var rc *ResponseContainer
+	var collapseBtn *widget.Button
+	collapseBtn = widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() {
+		if stackedTabs.Visible() {
+			stackedTabs.Hide()
+			rc.SetOffset(1)
+			collapseBtn.SetIcon(theme.MoveUpIcon())
+		} else {
+			stackedTabs.Show()
+			rc.SetOffset(0.7)
+			collapseBtn.SetIcon(theme.MoveDownIcon())
+		}
+	})
+	collapseBtn.Importance = widget.LowImportance
+
+	// Timing waterfall shown while hovering the time label. Lives in this
+	// Stack (not a widget.PopUp — its overlay steals hover and flickers).
+	waterfallHolder := container.NewStack()
+	waterfallHolder.Hide()
+	// anchor owns the topRight layout; refresh *it* on show, not the
+	// holder — the holder was sized 0x0 while empty and only the anchor's
+	// layout pass gives it its real size
+	waterfallAnchor := container.New(topRight{}, waterfallHolder)
+	timeLabel := newTimingLabel(bindings.time, func(hovering bool) {
+		if !hovering {
+			waterfallHolder.Hide()
+			return
+		}
+		v, _ := bindings.timings.Get()
+		t, ok := v.(core.Timings)
+		if !ok || t.Total <= 0 {
+			return
+		}
+		waterfallHolder.Objects = []fyne.CanvasObject{timingPanel(t)}
+		waterfallHolder.Show()
+		waterfallAnchor.Refresh()
+	})
+
+	toolbar := container.NewBorder(nil, nil, nil,
+		container.NewHBox(
+			container.NewCenter(statusPill),
+			timeLabel,
+			widget.NewLabelWithData(bindings.size),
+			rawToggle, wsToggle, copyIcon, collapseBtn,
+		),
+	)
+
+	rc = NewResponseContainer(container.NewStack(
+		stackedTabs,
+		container.NewBorder(toolbar, nil, nil, nil,
+			waterfallAnchor,
+		),
+	))
+	return rc
 }
