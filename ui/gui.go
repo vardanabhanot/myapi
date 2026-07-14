@@ -175,6 +175,11 @@ func (g *gui) dispatchShortcut(s fyne.Shortcut) bool {
 type appEntry struct {
 	widget.Entry
 	g *gui
+
+	// onPasteCurl intercepts a pasted "curl ..." command; set only on the
+	// URL bar. Return true to consume the paste. Ctrl+V only — the
+	// right-click menu paste bypasses TypedShortcut.
+	onPasteCurl func(cmd string) bool
 }
 
 func (g *gui) newAppEntry() *appEntry {
@@ -184,6 +189,13 @@ func (g *gui) newAppEntry() *appEntry {
 }
 
 func (e *appEntry) TypedShortcut(s fyne.Shortcut) {
+	if ps, ok := s.(*fyne.ShortcutPaste); ok && e.onPasteCurl != nil {
+		if cmd := strings.TrimSpace(ps.Clipboard.Content()); strings.HasPrefix(cmd, "curl ") {
+			if e.onPasteCurl(cmd) {
+				return
+			}
+		}
+	}
 	if e.g.dispatchShortcut(s) {
 		return
 	}
@@ -247,6 +259,21 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 	g.urlInput.SetPlaceHolder("Request URL")
 	if request.URL != "" {
 		g.urlInput.Text = request.URL
+	}
+
+	// Paste a "Copy as cURL" command into the URL bar → new tab with the
+	// imported request, current tab untouched.
+	g.urlInput.onPasteCurl = func(cmd string) bool {
+		parsed, err := core.ParseCurl(cmd)
+		if err != nil {
+			dialog.NewError(err, *g.Window).Show()
+			return true // consume: a broken multiline command is useless in a URL field
+		}
+
+		newTab := g.makeTab(parsed)
+		g.doctabs.Append(newTab)
+		g.doctabs.Select(newTab)
+		return true
 	}
 
 	g.urlInput.OnChanged = func(s string) {
