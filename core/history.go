@@ -22,27 +22,44 @@ func NewRequestID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
-func ListHistory() *[]map[string]string {
+// HistoryEntry is one row in the history list. ID is the bare request ID —
+// the ".json" filename suffix never leaves this file.
+type HistoryEntry struct {
+	ID     string
+	URL    string
+	Method string
+	MTime  string
+	Loaded bool // metadata lazy-loads per visible row; set by LoadMeta
+}
+
+// historyDir is the single place that knows where history lives.
+func historyDir() (string, error) {
 	localDir, err := os.UserCacheDir()
-
-	var requests []map[string]string
-
 	if err != nil {
-		return &requests
+		return "", err
 	}
+	return filepath.Join(localDir, "myapi"), nil
+}
 
-	myapiPath := filepath.Join(localDir, "/myapi")
-
-	_, err = os.Stat(myapiPath)
-
+func historyFile(id string) (string, error) {
+	dir, err := historyDir()
 	if err != nil {
-		return &requests
+		return "", err
+	}
+	return filepath.Join(dir, id+".json"), nil
+}
+
+func ListHistory() []*HistoryEntry {
+	var requests []*HistoryEntry
+
+	myapiPath, err := historyDir()
+	if err != nil {
+		return requests
 	}
 
 	requestFiles, err := os.ReadDir(myapiPath)
-
 	if err != nil {
-		return &requests
+		return requests
 	}
 
 	sort.Slice(requestFiles, func(i, j int) bool {
@@ -64,26 +81,28 @@ func ListHistory() *[]map[string]string {
 			continue // stray files (desktop.ini and friends) aren't history
 		}
 
-		requests = append(requests, map[string]string{"ID": file.Name()})
+		requests = append(requests, &HistoryEntry{ID: strings.TrimSuffix(file.Name(), ".json")})
 	}
 
-	return &requests
+	return requests
 }
 
-func LoadMetaData(filename string, request *map[string]string) {
-	localDir, _ := os.UserCacheDir()
-	myapiPath := filepath.Join(localDir, "/myapi/")
+// LoadMeta fills URL/Method/MTime from the entry's file. Marks the entry
+// Loaded even on failure so a broken file isn't re-read on every redraw.
+func (e *HistoryEntry) LoadMeta() {
+	e.Loaded = true
 
-	filePath := filepath.Join(myapiPath, filename)
+	filePath, err := historyFile(e.ID)
+	if err != nil {
+		return
+	}
 
 	fileContent, err := os.ReadFile(filePath)
-
 	if err != nil {
 		return
 	}
 
 	fileStat, err := os.Stat(filePath)
-
 	if err != nil {
 		return
 	}
@@ -93,21 +112,19 @@ func LoadMetaData(filename string, request *map[string]string) {
 		return
 	}
 
-	(*request)["requestURL"] = content.URL
-	(*request)["method"] = content.Method
-	(*request)["mtime"] = timeAgo(fileStat.ModTime())
+	e.URL = content.URL
+	e.Method = content.Method
+	e.MTime = timeAgo(fileStat.ModTime())
 }
 
 func saveRequestData(request *Request) (bool, error) {
-	localDir, err := os.UserCacheDir()
+	myapiPath, err := historyDir()
 
 	if err != nil {
 		//dialog.ShowError(err, *ui.Gui.Window)
 		//TODO:: We need to shift this dialog to the ui package
 		return false, err
 	}
-
-	myapiPath := filepath.Join(localDir, "/myapi")
 
 	_, err = os.Stat(myapiPath)
 
@@ -124,15 +141,15 @@ func saveRequestData(request *Request) (bool, error) {
 		}
 	}
 
-	var filename string
 	if request.ID == "" {
-		filename = NewRequestID()
-		request.ID = filename
-	} else {
-		filename = request.ID
+		request.ID = NewRequestID()
 	}
 
-	requestFile := filepath.Join(myapiPath, "/"+filename+".json")
+	requestFile, err := historyFile(request.ID)
+
+	if err != nil {
+		return false, err
+	}
 
 	jsondata, err := json.Marshal(request)
 
@@ -149,13 +166,12 @@ func saveRequestData(request *Request) (bool, error) {
 }
 
 func ClearHistory() error {
-	localDir, err := os.UserCacheDir()
+	myapiPath, err := historyDir()
 
 	if err != nil {
 		return err
 	}
 
-	myapiPath := filepath.Join(localDir, "myapi")
 	entries, err := os.ReadDir(myapiPath)
 
 	if err != nil {
@@ -175,27 +191,21 @@ func ClearHistory() error {
 }
 
 func DeleteHistory(id string) error {
-
-	localDir, err := os.UserCacheDir()
+	file, err := historyFile(id)
 
 	if err != nil {
 		return err
 	}
 
-	file := filepath.Join(localDir, "/myapi/"+id)
-
 	return os.Remove(file)
 }
 
 func LoadRequest(id string) (*Request, error) {
-
-	localDir, err := os.UserCacheDir()
+	file, err := historyFile(id)
 
 	if err != nil {
 		return nil, err
 	}
-
-	file := filepath.Join(localDir, "/myapi/"+id)
 
 	fileContent, err := os.ReadFile(file)
 
@@ -215,13 +225,11 @@ func LoadRequest(id string) (*Request, error) {
 }
 
 func CloneHistory(id string) error {
-	localDir, err := os.UserCacheDir()
+	file, err := historyFile(id)
 
 	if err != nil {
 		return err
 	}
-
-	file := filepath.Join(localDir, "/myapi/"+id)
 
 	fileContent, err := os.ReadFile(file)
 
