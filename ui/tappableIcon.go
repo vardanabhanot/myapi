@@ -84,6 +84,30 @@ func (t *tappableIcon) MouseUp(*desktop.MouseEvent) {
 	t.updateBackground()
 }
 
+// showIconMenu pops a small menu anchored under a tappable icon.
+func showIconMenu(icon *tappableIcon, items ...*fyne.MenuItem) {
+	d := fyne.CurrentApp().Driver()
+	c := d.CanvasForObject(icon)
+	popUpMenu := widget.NewPopUpMenu(fyne.NewMenu("", items...), c)
+
+	buttonPos := d.AbsolutePositionForObject(icon)
+	buttonSize := icon.Size()
+
+	var popUpPos fyne.Position
+	popUpPos.X = buttonPos.X + (buttonSize.Width / 2)
+	popUpPos.Y = buttonPos.Y + (buttonSize.Height / 1.2)
+
+	if popUpPos.X < 0 {
+		popUpPos.X = 0
+	}
+	if popUpPos.Y < 0 {
+		popUpPos.Y = 0
+	}
+
+	popUpMenu.ShowAtPosition(popUpPos)
+	popUpMenu.Resize(fyne.NewSize(120, popUpMenu.MinSize().Height))
+}
+
 func (t *tappableIcon) updateBackground() {
 	if t.pressed {
 		t.background.FillColor = theme.Color(theme.ColorNamePressed)

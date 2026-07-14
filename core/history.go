@@ -8,13 +8,19 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
-
-	"fyne.io/fyne/v2/storage"
 )
 
 // The request data are saved in json files, in the OS's Cache dir
 // And the time of creation of the tab of request is used as the key
+
+// NewRequestID is the single source of request/tab identity. Nanoseconds:
+// second-resolution IDs collided when two tabs were created within the same
+// second, silently sharing one history file.
+func NewRequestID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
 
 func ListHistory() *[]map[string]string {
 	localDir, err := os.UserCacheDir()
@@ -51,28 +57,17 @@ func ListHistory() *[]map[string]string {
 		return infoI.ModTime().After(infoJ.ModTime())
 	})
 
-	requests = LazyLoadHistory(0, &requestFiles)
-
-	return &requests
-}
-
-func LazyLoadHistory(index int, requestFiles *[]os.DirEntry) []map[string]string {
-
-	var requests []map[string]string
-
-	for i, file := range *requestFiles {
-
-		if i > 20 {
-			break
+	// Rows only carry the ID here; the list lazy-loads metadata per visible
+	// row, so listing everything is cheap even for a large history.
+	for _, file := range requestFiles {
+		if !strings.HasSuffix(file.Name(), ".json") {
+			continue // stray files (desktop.ini and friends) aren't history
 		}
 
-		var request = make(map[string]string)
-
-		request["ID"] = file.Name()
-		requests = append(requests, request)
+		requests = append(requests, map[string]string{"ID": file.Name()})
 	}
 
-	return requests
+	return &requests
 }
 
 func LoadMetaData(filename string, request *map[string]string) {
@@ -131,7 +126,7 @@ func saveRequestData(request *Request) (bool, error) {
 
 	var filename string
 	if request.ID == "" {
-		filename = fmt.Sprintf("%d", time.Now().Unix())
+		filename = NewRequestID()
 		request.ID = filename
 	} else {
 		filename = request.ID
@@ -139,21 +134,44 @@ func saveRequestData(request *Request) (bool, error) {
 
 	requestFile := filepath.Join(myapiPath, "/"+filename+".json")
 
-	uri := storage.NewFileURI(requestFile)
-
-	writer, _ := storage.Writer(uri)
-	defer writer.Close()
-
 	jsondata, err := json.Marshal(request)
 
 	if err != nil {
 		return false, err
 	}
 
-	writer.Write(jsondata)
+	if err := os.WriteFile(requestFile, jsondata, 0o644); err != nil {
+		return false, err
+	}
 
 	return true, nil
 
+}
+
+func ClearHistory() error {
+	localDir, err := os.UserCacheDir()
+
+	if err != nil {
+		return err
+	}
+
+	myapiPath := filepath.Join(localDir, "myapi")
+	entries, err := os.ReadDir(myapiPath)
+
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		if err := os.Remove(filepath.Join(myapiPath, entry.Name())); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func DeleteHistory(id string) error {
