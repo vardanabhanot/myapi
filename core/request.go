@@ -10,6 +10,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -23,8 +25,17 @@ type Request struct {
 	Body        Body        `json:"Body"`
 	AuthType    string      `json:"AuthType"`
 	Auth        *Auth       `json:"Auth"`
+	Settings    Settings    `json:"Settings"`
 	MTime       string      `json:"-"`
 	IsDirty     bool        `json:"-"`
+}
+
+// Settings holds per-request transport options. Fields are named so the Go
+// zero value means default behaviour — old saved requests unmarshal to zero.
+type Settings struct {
+	TimeoutSec        int  `json:"TimeoutSec"` // 0 → 30s default
+	NoFollowRedirects bool `json:"NoFollowRedirects"`
+	SkipTLSVerify     bool `json:"SkipTLSVerify"`
 }
 
 type Body struct {
@@ -127,13 +138,39 @@ func (r *Request) SendRequest(ctx context.Context) (*Response, error) {
 			writer.Close()
 
 			req.Body = io.NopCloser(&b)
+
+		case "URL Encoded":
+			values := url.Values{}
+			for _, v := range *r.Body.Form {
+				if v.Checked && v.Key != "" {
+					values.Add(ApplyEnv(v.Key), ApplyEnv(v.Value))
+				}
+			}
+
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Body = io.NopCloser(strings.NewReader(values.Encode()))
 		}
 
 	}
 
-	// ponytail: fixed 30s timeout; make it a per-request setting when the
-	// request-settings UI exists. Cancel button still works via ctx.
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Zero-value settings keep the old defaults: 30s timeout, follow
+	// redirects, verify TLS. Cancel button still works via ctx.
+	timeout := 30 * time.Second
+	if r.Settings.TimeoutSec > 0 {
+		timeout = time.Duration(r.Settings.TimeoutSec) * time.Second
+	}
+
+	client := &http.Client{Timeout: timeout}
+
+	if r.Settings.NoFollowRedirects {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+
+	if r.Settings.SkipTLSVerify {
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
 
 	var timings Timings
 	startTime := time.Now()

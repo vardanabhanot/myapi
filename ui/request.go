@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"log"
 	"net/url"
+	"strconv"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -225,7 +226,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		request.BodyType = "JSON"
 	}
 
-	jsonTextArea := widget.NewEntry()
+	jsonTextArea := g.newAppEntry()
 	jsonTextArea.SetText(request.Body.Json)
 
 	jsonTextArea.MultiLine = true
@@ -237,7 +238,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	bodyOptIns.json = jsonTextArea
 
-	xmlTextArea := widget.NewEntry()
+	xmlTextArea := g.newAppEntry()
 	xmlTextArea.SetText(request.Body.Xml)
 
 	xmlTextArea.MultiLine = true
@@ -249,7 +250,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	bodyOptIns.xml = xmlTextArea
 
-	textTextArea := widget.NewEntry()
+	textTextArea := g.newAppEntry()
 	textTextArea.SetText(request.Body.Text)
 
 	textTextArea.OnChanged = func(s string) {
@@ -292,7 +293,9 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		formContainer,
 	)
 
-	bodyOptions := widget.NewRadioGroup([]string{"JSON", "Form", "XML", "Text"}, func(value string) {
+	// "Form" is multipart; "URL Encoded" shares the same key/value rows and
+	// only changes how the body is encoded at send time.
+	bodyOptions := widget.NewRadioGroup([]string{"JSON", "Form", "URL Encoded", "XML", "Text"}, func(value string) {
 		request.BodyType = value
 
 		switch value {
@@ -302,7 +305,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 			bodyOptIns.text.Hide()
 			bodyOptIns.form.Hide()
 
-		case "Form":
+		case "Form", "URL Encoded":
 			bodyOptIns.form.Show()
 			bodyOptIns.json.Hide()
 			bodyOptIns.xml.Hide()
@@ -324,16 +327,9 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 
 	bodyOptions.Horizontal = true
 
-	if request.BodyType == "" {
-		bodyOptions.SetSelected("JSON")
-	} else {
-		bodyOptions.SetSelected(request.BodyType)
-	}
-
-	bodyOptIns.json.Show()
-	bodyOptIns.form.Hide() // TODO:: Need to implement forms, am lazy to do it now as it will need key value inputs
-	bodyOptIns.xml.Hide()
-	bodyOptIns.text.Hide()
+	// BodyType is never empty here (defaulted above); the radio callback
+	// shows the matching editor and hides the rest.
+	bodyOptions.SetSelected(request.BodyType)
 
 	bodyOptionView := container.NewStack(
 		bodyOptIns.json,
@@ -345,6 +341,39 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	bodyContainer := container.NewPadded(
 		container.NewBorder(bodyOptions, nil, nil, nil, bodyOptionView),
 	)
+
+	// Per-request settings; zero values = default behaviour (30s, follow
+	// redirects, verify TLS), so old saved requests load unchanged.
+	timeoutEntry := widget.NewEntry()
+	timeoutEntry.SetPlaceHolder("30")
+	if request.Settings.TimeoutSec > 0 {
+		timeoutEntry.SetText(strconv.Itoa(request.Settings.TimeoutSec))
+	}
+	timeoutEntry.OnChanged = func(s string) {
+		request.Settings.TimeoutSec, _ = strconv.Atoi(s) // invalid/empty → 0 → default
+		request.IsDirty = true
+	}
+
+	redirectCheck := widget.NewCheck("Don't follow redirects", nil)
+	redirectCheck.SetChecked(request.Settings.NoFollowRedirects)
+	redirectCheck.OnChanged = func(b bool) {
+		request.Settings.NoFollowRedirects = b
+		request.IsDirty = true
+	}
+
+	tlsCheck := widget.NewCheck("Skip TLS certificate verification", nil)
+	tlsCheck.SetChecked(request.Settings.SkipTLSVerify)
+	tlsCheck.OnChanged = func(b bool) {
+		request.Settings.SkipTLSVerify = b
+		request.IsDirty = true
+	}
+
+	settingsContainer := container.NewPadded(container.NewVBox(
+		sectionHeader("Request Settings"),
+		container.NewBorder(nil, nil, widget.NewLabel("Timeout (seconds)"), nil, timeoutEntry),
+		redirectCheck,
+		tlsCheck,
+	))
 
 	// Code Gen drawer
 	var codePreviewContainer *fyne.Container
@@ -425,6 +454,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 			container.NewTabItem("Headers", headerContainer),
 			container.NewTabItem("Auth", authContainer),
 			container.NewTabItem("Body", bodyContainer),
+			container.NewTabItem("Settings", settingsContainer),
 		),
 		container.NewBorder(container.NewBorder(nil, nil, nil, codeIconTappable), nil, nil, nil),
 	))

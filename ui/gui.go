@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/vardanabhanot/myapi/core"
@@ -22,7 +23,7 @@ var appversion string
 type gui struct {
 	Window *fyne.Window
 
-	urlInput       *widget.Entry
+	urlInput       *appEntry
 	queryList      *widget.List
 	syncingQuery   bool // true while updateURL writes the URL entry
 	tabs           map[string]*tab
@@ -50,6 +51,8 @@ type tab struct {
 	bodyListner binding.DataListener
 	collection  *core.Collection // set when this tab mirrors a collection entry
 	colEntry    *core.Request    // the mirrored snapshot inside collection
+	send        func()           // taps this tab's Send button; Ctrl+Enter uses it
+	showSearch  func()           // opens this tab's response search bar; Ctrl+F uses it
 }
 
 type bindings struct {
@@ -72,39 +75,7 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 	g.doctabs.Append(tabItem)
 
 	// Need to clean g.tabs when the tab is closed
-	g.doctabs.CloseIntercept = func(ti *container.TabItem) {
-		var deletable string
-		for child, tab := range g.tabs {
-			if tab.item == ti {
-				deletable = child
-			}
-		}
-
-		// Clean Up
-		if deletable != "" {
-			g.tabs[deletable].bindings.body.RemoveListener(g.tabs[deletable].bodyListner)
-			g.tabs[deletable].bindings.body = nil
-			g.tabs[deletable].bindings.headers = nil
-			g.tabs[deletable].bindings.cookies = nil
-			g.tabs[deletable].bindings.status = nil
-			g.tabs[deletable].bindings.timings = nil
-			g.tabs[deletable].bindings.time = nil
-			g.tabs[deletable].bodyListner = nil
-			g.tabs[deletable].bindings = nil
-			g.tabs[deletable].collection = nil
-			g.tabs[deletable].colEntry = nil
-			delete(g.tabs, deletable)
-		}
-
-		g.doctabs.Remove(ti)
-		ti.Content = nil
-		ti = nil
-
-		// If all tabs are closed we need to add a new empty tab
-		if len(g.doctabs.Items) == 0 {
-			g.doctabs.Append(g.makeTab(nil))
-		}
-	}
+	g.doctabs.CloseIntercept = g.closeTab
 
 	g.doctabs.OnSelected = func(tabItem *container.TabItem) {
 		// The structure of g.tabs is a map of [tabID]DocTabTab Items
@@ -123,6 +94,17 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 
 		// This will happen for a New Request tab as it does not gets saved until a request is sent.
 		g.requestList.UnselectAll()
+	}
+
+	// App-wide shortcuts. The canvas only receives shortcuts when nothing
+	// is focused — a focused Entry swallows them — so entries created via
+	// newAppEntry forward to the same dispatcher.
+	winCanvas := (*window).Canvas()
+	for _, k := range []fyne.KeyName{fyne.KeyT, fyne.KeyW, fyne.KeyReturn, fyne.KeyF} {
+		winCanvas.AddShortcut(
+			&desktop.CustomShortcut{KeyName: k, Modifier: fyne.KeyModifierControl},
+			func(s fyne.Shortcut) { g.dispatchShortcut(s) },
+		)
 	}
 
 	g.sidebar = g.makeSideBar()
@@ -145,6 +127,111 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 	return container.NewBorder(nil, footer, nil, nil, baseView)
 }
 
+// activeTab resolves the currently selected DocTabs item to its tab entry.
+func (g *gui) activeTab() *tab {
+	sel := g.doctabs.Selected()
+	for _, t := range g.tabs {
+		if t.item == sel {
+			return t
+		}
+	}
+	return nil
+}
+
+// dispatchShortcut handles the app-wide Ctrl shortcuts. Returns whether the
+// shortcut was ours, so appEntry knows when to fall through to Entry.
+func (g *gui) dispatchShortcut(s fyne.Shortcut) bool {
+	cs, ok := s.(*desktop.CustomShortcut)
+	if !ok || cs.Modifier != fyne.KeyModifierControl {
+		return false
+	}
+
+	switch cs.KeyName {
+	case fyne.KeyT:
+		newTab := g.makeTab(nil)
+		g.doctabs.Append(newTab)
+		g.doctabs.Select(newTab)
+	case fyne.KeyW:
+		g.closeTab(g.doctabs.Selected())
+	case fyne.KeyReturn:
+		if t := g.activeTab(); t != nil && t.send != nil {
+			t.send()
+		}
+	case fyne.KeyF:
+		if t := g.activeTab(); t != nil && t.showSearch != nil {
+			t.showSearch()
+		}
+	default:
+		return false
+	}
+
+	return true
+}
+
+// appEntry is a widget.Entry that keeps app-wide Ctrl shortcuts working
+// while it has focus: the driver delivers shortcuts ONLY to the focused
+// widget, so a plain Entry would swallow Ctrl+T/W/Enter/F.
+// ponytail: only the URL bar and body editors use it; swap the remaining
+// widget.NewEntry sites if users miss shortcuts elsewhere.
+type appEntry struct {
+	widget.Entry
+	g *gui
+}
+
+func (g *gui) newAppEntry() *appEntry {
+	e := &appEntry{g: g}
+	e.ExtendBaseWidget(e)
+	return e
+}
+
+func (e *appEntry) TypedShortcut(s fyne.Shortcut) {
+	if e.g.dispatchShortcut(s) {
+		return
+	}
+	e.Entry.TypedShortcut(s)
+}
+
+// closeTab is both the DocTabs close-intercept and the Ctrl+W handler:
+// drops the tab's bindings so listeners and retained bodies get released.
+func (g *gui) closeTab(ti *container.TabItem) {
+	if ti == nil {
+		return
+	}
+
+	var deletable string
+	for child, tab := range g.tabs {
+		if tab.item == ti {
+			deletable = child
+		}
+	}
+
+	// Clean Up
+	if deletable != "" {
+		g.tabs[deletable].bindings.body.RemoveListener(g.tabs[deletable].bodyListner)
+		g.tabs[deletable].bindings.body = nil
+		g.tabs[deletable].bindings.headers = nil
+		g.tabs[deletable].bindings.cookies = nil
+		g.tabs[deletable].bindings.status = nil
+		g.tabs[deletable].bindings.timings = nil
+		g.tabs[deletable].bindings.time = nil
+		g.tabs[deletable].bodyListner = nil
+		g.tabs[deletable].bindings = nil
+		g.tabs[deletable].collection = nil
+		g.tabs[deletable].colEntry = nil
+		g.tabs[deletable].send = nil
+		g.tabs[deletable].showSearch = nil
+		delete(g.tabs, deletable)
+	}
+
+	g.doctabs.Remove(ti)
+	ti.Content = nil
+
+	// If all tabs are closed we need to add a new empty tab
+	if len(g.doctabs.Items) == 0 {
+		g.doctabs.Append(g.makeTab(nil))
+	}
+}
+
 // request here can be nil as we might not want to send it here
 func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
@@ -157,7 +244,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 	requestUI := g.makeRequestUI(g.tabs[request.ID+".json"].request)
 	response := g.makeResponseUI(g.tabs[request.ID+".json"].request)
-	g.urlInput = widget.NewEntry()
+	g.urlInput = g.newAppEntry()
 	g.urlInput.SetPlaceHolder("Request URL")
 	if request.URL != "" {
 		g.urlInput.Text = request.URL
@@ -318,6 +405,10 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		makeRequest.Tapped(&fyne.PointEvent{})
 	}
 
+	g.tabs[request.ID+".json"].send = func() {
+		makeRequest.Tapped(&fyne.PointEvent{})
+	}
+
 	addToColBtn := widget.NewButtonWithIcon("", theme.FolderNewIcon(), func() {
 		g.addToCollectionDialog(request)
 	})
@@ -475,9 +566,12 @@ func (g *gui) makeSideBar() *fyne.Container {
 
 		type shortcut struct{ keys, action string }
 		shortcuts := []shortcut{
-			{"Enter", "Send request"},
-			{"Ctrl + T", "New tab (planned)"},
-			{"Ctrl + W", "Close tab (planned)"},
+			{"Enter", "Send request (URL focused)"},
+			{"Ctrl + Enter", "Send request"},
+			{"Ctrl + T", "New tab"},
+			{"Ctrl + W", "Close tab"},
+			{"Ctrl + F", "Search response"},
+			{"Esc", "Close response search"},
 		}
 
 		rows := container.NewVBox()

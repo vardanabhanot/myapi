@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image/color"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -10,10 +12,53 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/vardanabhanot/myapi/core"
 )
+
+// saveFileName suggests a download name: the URL's last path segment, with
+// an extension from Content-Type when the segment doesn't already carry one.
+// Deliberate switch instead of mime.ExtensionsByType: on Windows that reads
+// the registry and can return junk like ".bat" for text/plain.
+func saveFileName(rawURL string, headers []string) string {
+	name := "response"
+	if u, err := url.Parse(rawURL); err == nil {
+		if base := path.Base(u.Path); base != "." && base != "/" {
+			name = base
+		}
+	}
+
+	if strings.Contains(name, ".") {
+		return name
+	}
+
+	ext := ".txt"
+	for _, h := range headers {
+		k, v, _ := strings.Cut(h, "||")
+		if !strings.EqualFold(k, "Content-Type") {
+			continue
+		}
+
+		ct, _, _ := strings.Cut(v, ";")
+		switch strings.TrimSpace(ct) {
+		case "application/json":
+			ext = ".json"
+		case "application/xml", "text/xml":
+			ext = ".xml"
+		case "text/html":
+			ext = ".html"
+		case "text/css":
+			ext = ".css"
+		case "application/javascript", "text/javascript":
+			ext = ".js"
+		}
+		break
+	}
+
+	return name + ext
+}
 
 // safeCut truncates s to at most max bytes without splitting a rune.
 func safeCut(s string, max int) string {
@@ -116,6 +161,9 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 	responseTab.ShowLineNumbers = true
 	responseTab.ShowWhitespace = true // toggle available in toolbar
 
+	search := newResponseSearch(responseTab, (*g.Window).Canvas())
+	g.tabs[request.ID+".json"].showSearch = search.show
+
 	headerMap, _ := bindings.headers.Get() // render() reads Content-Type from it
 	headerTable := keyValueTable(bindings.headers)
 	cookieTable := keyValueTable(bindings.cookies)
@@ -137,6 +185,33 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 		})
 	})
 	copyIcon.Hide()
+
+	// Save-to-file. ponytail: writes the retained body (2MB cap, 4MB read
+	// cap) — stream-to-file download is a later feature.
+	var saveIcon *tappableIcon
+	saveIcon = newTappableIcon(theme.DownloadIcon(), func() {
+		body, _ := bindings.body.Get()
+		if body == "" {
+			return
+		}
+
+		fileSave := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+			if err != nil || writer == nil {
+				return
+			}
+			defer writer.Close()
+
+			if _, err := writer.Write([]byte(body)); err != nil {
+				dialog.NewError(err, *g.Window).Show()
+			}
+		}, *g.Window)
+		fileSave.SetFileName(saveFileName(request.URL, headerMap))
+		fileSave.Show()
+	})
+	saveIcon.Hide()
+
+	searchIcon := newTappableIcon(theme.SearchIcon(), search.show)
+	searchIcon.Hide()
 
 	// Whitespace toggle button
 	var wsToggle *widget.Button
@@ -218,6 +293,7 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 		// If empty, clear the TextGrid to free memory and return
 		if responseBodyString == "" {
 			responseTab.SetText("")
+			search.contentChanged()
 			return
 		}
 
@@ -254,8 +330,13 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 		}
 
 		copyIcon.Show()
+		saveIcon.Show()
+		searchIcon.Show()
 		wsToggle.Show()
 		rawToggle.Show()
+
+		// rows were rebuilt; stale match styles must not be restored
+		search.contentChanged()
 	}
 
 	rawToggle = widget.NewButton("Raw", func() {
@@ -323,15 +404,15 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 			container.NewCenter(statusPill),
 			timeLabel,
 			widget.NewLabelWithData(bindings.size),
-			rawToggle, wsToggle, copyIcon, collapseBtn,
+			rawToggle, wsToggle, searchIcon, copyIcon, saveIcon, collapseBtn,
 		),
 	)
 
-	rc = NewResponseContainer(container.NewStack(
+	rc = NewResponseContainer(container.NewBorder(search.bar, nil, nil, nil, container.NewStack(
 		stackedTabs,
 		container.NewBorder(toolbar, nil, nil, nil,
 			waterfallAnchor,
 		),
-	))
+	)))
 	return rc
 }
