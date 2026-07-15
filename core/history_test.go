@@ -1,9 +1,40 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestMigrateHistoryFiles(t *testing.T) {
+	oldDir, newDir := t.TempDir(), t.TempDir()
+
+	write := func(dir, name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(oldDir, "111.json", "old")
+	write(oldDir, "222.json", "moved")
+	write(oldDir, "desktop.ini", "stray")
+	write(newDir, "111.json", "existing") // must not be clobbered
+
+	migrateHistoryFiles(oldDir, newDir)
+
+	if got, _ := os.ReadFile(filepath.Join(newDir, "111.json")); string(got) != "existing" {
+		t.Fatalf("clobbered existing entry: %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(newDir, "222.json")); string(got) != "moved" {
+		t.Fatalf("222.json not migrated: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(oldDir, "222.json")); err == nil {
+		t.Fatal("222.json left behind in old dir")
+	}
+	if _, err := os.Stat(filepath.Join(oldDir, "desktop.ini")); err != nil {
+		t.Fatal("stray file should stay put")
+	}
+}
 
 // Round-trip: save → list (bare IDs, no ".json") → load → delete.
 func TestHistoryRoundTrip(t *testing.T) {

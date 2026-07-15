@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
-// The request data are saved in json files, in the OS's Cache dir
-// And the time of creation of the tab of request is used as the key
+// The request data are saved in json files, one per request, in a history/
+// subdir of the user config dir. The time of creation of the tab of request
+// is used as the key.
 
 // NewRequestID is the single source of request/tab identity. Nanoseconds:
 // second-resolution IDs collided when two tabs were created within the same
@@ -32,13 +34,71 @@ type HistoryEntry struct {
 	Loaded bool // metadata lazy-loads per visible row; set by LoadMeta
 }
 
-// historyDir is the single place that knows where history lives.
+var migrateOnce sync.Once
+
+// historyDir is the single place that knows where history lives: a
+// history/ subdir of the config dir (NOT the config root — that holds
+// environments.json and collections.json, and ListHistory/ClearHistory
+// treat every .json in their dir as history). History used to live in the
+// OS cache dir, which the OS is free to purge; first access migrates any
+// old files over.
 func historyDir() (string, error) {
-	localDir, err := os.UserCacheDir()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(localDir, "myapi"), nil
+
+	dir := filepath.Join(configDir, "myapi", "history")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+
+	migrateOnce.Do(func() {
+		if cacheDir, err := os.UserCacheDir(); err == nil {
+			migrateHistoryFiles(filepath.Join(cacheDir, "myapi"), dir)
+		}
+	})
+
+	return dir, nil
+}
+
+// migrateHistoryFiles moves the *.json history files from the old cache
+// location into dir. Best-effort: a file that can't move stays behind and
+// is retried on the next launch.
+func migrateHistoryFiles(oldDir, dir string) {
+	entries, err := os.ReadDir(oldDir)
+	if err != nil {
+		return // nothing to migrate
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+
+		src := filepath.Join(oldDir, e.Name())
+		dst := filepath.Join(dir, e.Name())
+		if _, err := os.Stat(dst); err == nil {
+			continue // never clobber an existing entry
+		}
+
+		if os.Rename(src, dst) == nil {
+			continue
+		}
+
+		// cross-device rename fails: copy, keep the mtime (the list sorts
+		// and labels by it), then delete the original
+		data, err := os.ReadFile(src)
+		if err != nil || os.WriteFile(dst, data, 0o644) != nil {
+			continue
+		}
+		if info, err := e.Info(); err == nil {
+			os.Chtimes(dst, info.ModTime(), info.ModTime())
+		}
+		os.Remove(src)
+	}
+
+	os.Remove(oldDir) // only succeeds once empty; stray files keep it alive
 }
 
 func historyFile(id string) (string, error) {
@@ -118,29 +178,6 @@ func (e *HistoryEntry) LoadMeta() {
 }
 
 func saveRequestData(request *Request) (bool, error) {
-	myapiPath, err := historyDir()
-
-	if err != nil {
-		//dialog.ShowError(err, *ui.Gui.Window)
-		//TODO:: We need to shift this dialog to the ui package
-		return false, err
-	}
-
-	_, err = os.Stat(myapiPath)
-
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			err = os.Mkdir(myapiPath, os.ModeDir)
-		}
-
-		// If we still have an error, we need to let the user know
-		if err != nil {
-			//dialog.ShowError(err, *ui.Gui.Window)
-			//TODO:: We need to shift this dialog to the ui package
-			return false, err
-		}
-	}
-
 	if request.ID == "" {
 		request.ID = NewRequestID()
 	}
