@@ -292,7 +292,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 			}
 		}
 
-		s = tabTitle(request.Method, s)
+		s = entryTitle(request)
 		if request.IsDirty {
 			s += " *"
 		}
@@ -308,7 +308,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		// Keep the tab title's method prefix in sync; only when this tab
 		// is the selected one (SetSelected also fires during makeTab)
 		if t := g.tabs[request.ID]; t != nil && t.item != nil && g.doctabs.Selected() == t.item {
-			title := tabTitle(value, request.URL)
+			title := entryTitle(request)
 			if request.IsDirty {
 				title += " *"
 			}
@@ -401,7 +401,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 			// To update the current tab text as if it is dirty it set a *
 			if request.IsDirty {
 				request.IsDirty = false
-				g.doctabs.Selected().Text = tabTitle(request.Method, request.URL)
+				g.doctabs.Selected().Text = entryTitle(request)
 
 				fyne.Do(func() {
 					g.doctabs.Refresh()
@@ -451,7 +451,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 	requestResponseContainer := container.NewStack(requestUI, response)
 
-	tabName := tabTitle(request.Method, request.URL)
+	tabName := entryTitle(request)
 	if request.URL == "" {
 		tabName += " *"
 	}

@@ -17,6 +17,7 @@ import (
 
 type Request struct {
 	ID          string      `json:"ID"`
+	Name        string      `json:"Name"` // user-given label; empty → UI falls back to method+path
 	Method      string      `json:"Method"`
 	URL         string      `json:"URL"`
 	QueryParams *[]FormType `json:"QueryParams"`

@@ -63,23 +63,57 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 				col := g.collections[ci]
 				label.SetText(col.Name)
 				options.onTapped = func() {
-					showIconMenu(options, fyne.NewMenuItem("Delete", func() {
+					// Re-locate by pointer at tap time: the captured index can
+					// be stale after deletes/moves, the pointer cannot.
+					i := g.collectionIndex(col)
+					if i < 0 {
+						return
+					}
+
+					rename := fyne.NewMenuItem("Rename", func() {
+						g.renameDialog("Rename Collection", col.Name, func(name string) {
+							if name == "" {
+								return
+							}
+							col.Name = name
+							g.saveCollections()
+							g.collectionTree.Refresh()
+						})
+					})
+
+					// ponytail: moves reorder index-based UIDs, so branch
+					// open/closed state stays with the position, not the
+					// collection. Cosmetic; stable UIDs if it ever grates.
+					up := fyne.NewMenuItem("Move Up", func() {
+						g.collections[i], g.collections[i-1] = g.collections[i-1], g.collections[i]
+						g.saveCollections()
+						g.collectionTree.Refresh()
+					})
+					up.Disabled = i == 0
+
+					down := fyne.NewMenuItem("Move Down", func() {
+						g.collections[i], g.collections[i+1] = g.collections[i+1], g.collections[i]
+						g.saveCollections()
+						g.collectionTree.Refresh()
+					})
+					down.Disabled = i == len(g.collections)-1
+
+					del := fyne.NewMenuItem("Delete", func() {
 						dialog.NewConfirm("Delete Collection", "Delete \""+col.Name+"\" and its requests?", func(confirmed bool) {
 							if !confirmed {
 								return
 							}
 
-							for i, c := range g.collections {
-								if c == col {
-									g.collections = append(g.collections[:i], g.collections[i+1:]...)
-									break
-								}
+							if i := g.collectionIndex(col); i >= 0 {
+								g.collections = append(g.collections[:i], g.collections[i+1:]...)
 							}
 
 							g.saveCollections()
 							g.collectionTree.Refresh()
 						}, *g.Window).Show()
-					}))
+					})
+
+					showIconMenu(options, rename, up, down, del)
 				}
 				return
 			}
@@ -92,25 +126,70 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 
 			col := g.collections[ci]
 			request := col.Requests[ri]
-			label.SetText(tabTitle(request.Method, request.URL))
+			label.SetText(entryTitle(request))
 			options.onTapped = func() {
-				showIconMenu(options, fyne.NewMenuItem("Remove", func() {
-					dialog.NewConfirm("Remove Request", "Remove this request from \""+col.Name+"\"?", func(confirmed bool) {
-						if !confirmed {
-							return
-						}
+				i := requestIndex(col, request)
+				if i < 0 {
+					return
+				}
 
-						for i, r := range col.Requests {
-							if r == request {
-								col.Requests = append(col.Requests[:i], col.Requests[i+1:]...)
-								break
+				rename := fyne.NewMenuItem("Rename", func() {
+					g.renameDialog("Rename Request", request.Name, func(name string) {
+						request.Name = name
+
+						// Push the name into open linked tabs too, or their
+						// next send-sync snapshots the old name back over it.
+						for _, t := range g.tabs {
+							if t.colEntry != request || t.request == nil {
+								continue
+							}
+
+							t.request.Name = name
+							if t.item != nil {
+								title := entryTitle(t.request)
+								if t.request.IsDirty {
+									title += " *"
+								}
+								t.item.Text = title
 							}
 						}
 
 						g.saveCollections()
 						g.collectionTree.Refresh()
+						g.doctabs.Refresh()
+					})
+				})
+
+				up := fyne.NewMenuItem("Move Up", func() {
+					col.Requests[i], col.Requests[i-1] = col.Requests[i-1], col.Requests[i]
+					g.saveCollections()
+					g.collectionTree.Refresh()
+				})
+				up.Disabled = i == 0
+
+				down := fyne.NewMenuItem("Move Down", func() {
+					col.Requests[i], col.Requests[i+1] = col.Requests[i+1], col.Requests[i]
+					g.saveCollections()
+					g.collectionTree.Refresh()
+				})
+				down.Disabled = i == len(col.Requests)-1
+
+				remove := fyne.NewMenuItem("Remove", func() {
+					dialog.NewConfirm("Remove Request", "Remove this request from \""+col.Name+"\"?", func(confirmed bool) {
+						if !confirmed {
+							return
+						}
+
+						if i := requestIndex(col, request); i >= 0 {
+							col.Requests = append(col.Requests[:i], col.Requests[i+1:]...)
+						}
+
+						g.saveCollections()
+						g.collectionTree.Refresh()
 					}, *g.Window).Show()
-				}))
+				})
+
+				showIconMenu(options, rename, up, down, remove)
 			}
 		},
 	)
@@ -220,6 +299,58 @@ func (g *gui) validFocusedCollection() *core.Collection {
 	}
 
 	return nil
+}
+
+// collectionIndex finds a collection by pointer identity; -1 when deleted.
+func (g *gui) collectionIndex(col *core.Collection) int {
+	for i, c := range g.collections {
+		if c == col {
+			return i
+		}
+	}
+
+	return -1
+}
+
+// requestIndex finds an entry inside a collection by pointer identity.
+func requestIndex(col *core.Collection, r *core.Request) int {
+	for i, req := range col.Requests {
+		if req == r {
+			return i
+		}
+	}
+
+	return -1
+}
+
+// entryTitle prefers the user-given name over the method+path fallback.
+func entryTitle(r *core.Request) string {
+	if r.Name == "" {
+		return tabTitle(r.Method, r.URL)
+	}
+
+	name := r.Name
+	if ru := []rune(name); len(ru) > 22 {
+		name = string(ru[:22]) + "…"
+	}
+
+	return r.Method + " " + name
+}
+
+// renameDialog is the one prefilled single-field form both rename menus use.
+func (g *gui) renameDialog(title, current string, apply func(string)) {
+	nameEntry := widget.NewEntry()
+	nameEntry.SetText(current)
+
+	dialog.NewForm(title, "Save", "Cancel", []*widget.FormItem{
+		widget.NewFormItem("Name", nameEntry),
+	}, func(confirmed bool) {
+		if !confirmed {
+			return
+		}
+
+		apply(strings.TrimSpace(nameEntry.Text))
+	}, *g.Window).Show()
 }
 
 // syncCollectionEntry mirrors a sent request back into its linked collection
