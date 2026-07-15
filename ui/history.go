@@ -17,26 +17,26 @@ import (
 // filterHistory replaces the visible history with entries whose URL or
 // method matches the query. Empty query restores the full list.
 func (g *gui) filterHistory(query string) {
-	all := *core.ListHistory()
+	all := core.ListHistory()
 
 	if query != "" {
 		query = strings.ToLower(query)
 		filtered := all[:0]
-		for i := range all {
+		for _, entry := range all {
 			// Search needs the metadata that list rows normally lazy-load
-			if all[i]["mtime"] == "" {
-				core.LoadMetaData(all[i]["ID"], &all[i])
+			if !entry.Loaded {
+				entry.LoadMeta()
 			}
 
-			if strings.Contains(strings.ToLower(all[i]["requestURL"]), query) ||
-				strings.Contains(strings.ToLower(all[i]["method"]), query) {
-				filtered = append(filtered, all[i])
+			if strings.Contains(strings.ToLower(entry.URL), query) ||
+				strings.Contains(strings.ToLower(entry.Method), query) {
+				filtered = append(filtered, entry)
 			}
 		}
 		all = filtered
 	}
 
-	*g.requestHistory = all
+	g.requestHistory = all
 	g.requestList.UnselectAll()
 	g.requestList.Refresh()
 }
@@ -44,7 +44,7 @@ func (g *gui) filterHistory(query string) {
 func (g *gui) renderHistoryContent() {
 	g.requestList = widget.NewList(
 		func() int {
-			return len(*g.requestHistory)
+			return len(g.requestHistory)
 		},
 		func() fyne.CanvasObject {
 			// Pill background
@@ -77,8 +77,8 @@ func (g *gui) renderHistoryContent() {
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 
-			if o.Visible() && (*g.requestHistory)[i]["mtime"] == "" {
-				core.LoadMetaData((*g.requestHistory)[i]["ID"], &(*g.requestHistory)[i])
+			if o.Visible() && !g.requestHistory[i].Loaded {
+				g.requestHistory[i].LoadMeta()
 			}
 
 			hoverableContainer, _ := o.(*hoverableListItem)
@@ -100,14 +100,14 @@ func (g *gui) renderHistoryContent() {
 							return
 						}
 
-						err := core.DeleteHistory((*g.requestHistory)[i]["ID"])
+						err := core.DeleteHistory(g.requestHistory[i].ID)
 
 						if err != nil {
 							dialog.NewError(err, *g.Window)
 							return
 						}
 
-						(*g.requestHistory) = append((*g.requestHistory)[:i], (*g.requestHistory)[i+1:]...)
+						g.requestHistory = append(g.requestHistory[:i], g.requestHistory[i+1:]...)
 						g.requestList.Refresh()
 					}, (*g.Window))
 
@@ -119,7 +119,7 @@ func (g *gui) renderHistoryContent() {
 
 				clone := fyne.NewMenuItem("Clone", func() {
 
-					if err := core.CloneHistory((*g.requestHistory)[i]["ID"]); err != nil {
+					if err := core.CloneHistory(g.requestHistory[i].ID); err != nil {
 						fmt.Println(err)
 						dialog.NewError(err, (*g.Window))
 					}
@@ -138,7 +138,7 @@ func (g *gui) renderHistoryContent() {
 			}
 
 			// Update pill color and text
-			methodStr := (*g.requestHistory)[i]["method"]
+			methodStr := g.requestHistory[i].Method
 			if len(methodStr) > 4 {
 				label.Text = methodStr[0:3]
 			} else {
@@ -148,34 +148,33 @@ func (g *gui) renderHistoryContent() {
 			label.Color = mCol
 			pillBg.FillColor = color.NRGBA{R: mCol.R, G: mCol.G, B: mCol.B, A: 35}
 			pillBg.Refresh()
-			borderContainer.Objects[0].(*widget.Label).SetText((*g.requestHistory)[i]["requestURL"])
-			timeContainer.Objects[0].(*canvas.Text).Text = (*g.requestHistory)[i]["mtime"]
+			borderContainer.Objects[0].(*widget.Label).SetText(g.requestHistory[i].URL)
+			timeContainer.Objects[0].(*canvas.Text).Text = g.requestHistory[i].MTime
 		},
 	)
 	g.requestList.OnSelected = func(id widget.ListItemID) {
 		for t, i := range g.tabs {
 			// If the List Select is triggered by the select of the tab then we need to make sure
 			// we do not end up reselecting the doctab as that got selected already.
-			if t == (*g.requestHistory)[id]["ID"] && g.doctabs.Selected() == i.item {
+			if t == g.requestHistory[id].ID && g.doctabs.Selected() == i.item {
 				return
 			}
 
-			if t == (*g.requestHistory)[id]["ID"] {
+			if t == g.requestHistory[id].ID {
 				g.doctabs.Select(i.item)
 				return
 			}
 		}
 
-		request, err := core.LoadRequest((*g.requestHistory)[id]["ID"])
+		request, err := core.LoadRequest(g.requestHistory[id].ID)
 
 		if err != nil {
 			dialog.NewError(err, *g.Window)
 			return
 		}
 
-		g.tabs[(*g.requestHistory)[id]["ID"]] = &tab{bindings: &bindings{}}
+		// makeTab registers g.tabs[request.ID] and sets .item itself
 		tabItem := g.makeTab(request)
-		g.tabs[(*g.requestHistory)[id]["ID"]].item = tabItem
 		g.doctabs.Append(tabItem)
 		g.doctabs.Select(tabItem)
 	}

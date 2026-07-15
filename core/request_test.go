@@ -32,7 +32,7 @@ func TestSendRequestURLEncodedBody(t *testing.T) {
 		{Checked: false, Key: "off", Value: "x"},
 		{Checked: true, Key: "", Value: "no key"},
 	}}
-	defer DeleteHistory("urlenctest.json")
+	defer DeleteHistory("urlenctest")
 
 	if _, err := req.SendRequest(context.Background()); err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestSettingsRedirects(t *testing.T) {
 
 	// Default: follows to the 200
 	req := testRequest("redirfollow", server.URL+"/redirect")
-	defer DeleteHistory("redirfollow.json")
+	defer DeleteHistory("redirfollow")
 	res, err := req.SendRequest(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestSettingsRedirects(t *testing.T) {
 	// NoFollowRedirects: returns the 302 itself
 	req = testRequest("redirstop", server.URL+"/redirect")
 	req.Settings.NoFollowRedirects = true
-	defer DeleteHistory("redirstop.json")
+	defer DeleteHistory("redirstop")
 	res, err = req.SendRequest(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestSettingsSkipTLSVerify(t *testing.T) {
 
 	req = testRequest("tlsskip", server.URL)
 	req.Settings.SkipTLSVerify = true
-	defer DeleteHistory("tlsskip.json")
+	defer DeleteHistory("tlsskip")
 	res, err := req.SendRequest(context.Background())
 	if err != nil {
 		t.Fatal(err)

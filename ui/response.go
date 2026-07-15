@@ -154,7 +154,7 @@ func keyValueTable(list binding.StringList) *widget.Table {
 }
 
 func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
-	bindings := g.tabs[request.ID+".json"].bindings
+	bindings := g.tabs[request.ID].bindings
 	bodyString, _ := bindings.body.Get()
 	responseTab := widget.NewTextGridFromString(softWrap(bodyString))
 	responseTab.Scroll = fyne.ScrollBoth
@@ -162,7 +162,7 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 	responseTab.ShowWhitespace = true // toggle available in toolbar
 
 	search := newResponseSearch(responseTab, (*g.Window).Canvas())
-	g.tabs[request.ID+".json"].showSearch = search.show
+	g.tabs[request.ID].showSearch = search.show
 
 	headerMap, _ := bindings.headers.Get() // render() reads Content-Type from it
 	headerTable := keyValueTable(bindings.headers)
@@ -352,8 +352,8 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 	rawToggle.Importance = widget.LowImportance
 	rawToggle.Hide()
 
-	g.tabs[request.ID+".json"].bodyListner = binding.NewDataListener(render)
-	bindings.body.AddListener(g.tabs[request.ID+".json"].bodyListner)
+	g.tabs[request.ID].bodyListner = binding.NewDataListener(render)
+	bindings.body.AddListener(g.tabs[request.ID].bodyListner)
 
 	tabs.Hide()
 	stackedTabs := container.NewStack(responsePlaceholder, tabs)

@@ -62,7 +62,7 @@ func TestSendRequestAppliesEnv(t *testing.T) {
 		BodyType: "JSON",
 		Body:     Body{Json: `{"k":"{{key}}"}`},
 	}
-	defer DeleteHistory("envtest.json") // SendRequest saves into history
+	defer DeleteHistory("envtest") // SendRequest saves into history
 
 	if _, err := req.SendRequest(context.Background()); err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestSendRequestAppliesEnv(t *testing.T) {
 		t.Fatalf("substitution missed: query=%q header=%q body=%q", gotQuery, gotHeader, gotBody)
 	}
 
-	saved, err := LoadRequest("envtest.json")
+	saved, err := LoadRequest("envtest")
 	if err != nil {
 		t.Fatal(err)
 	}

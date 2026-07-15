@@ -142,7 +142,7 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 		request.IsDirty = true
 
 		tabItem := g.makeTab(request)
-		t := g.tabs[request.ID+".json"]
+		t := g.tabs[request.ID]
 		t.collection = col
 		t.colEntry = col.Requests[ri]
 		g.doctabs.Append(tabItem)
@@ -175,7 +175,7 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 
 		request := &core.Request{ID: core.NewRequestID(), Method: "GET", IsDirty: true}
 		tabItem := g.makeTab(request)
-		t := g.tabs[request.ID+".json"]
+		t := g.tabs[request.ID]
 		t.collection = col
 		t.colEntry = entry
 		g.doctabs.Append(tabItem)
@@ -225,7 +225,7 @@ func (g *gui) validFocusedCollection() *core.Collection {
 // syncCollectionEntry mirrors a sent request back into its linked collection
 // entry. Called from the send goroutine after a successful request.
 func (g *gui) syncCollectionEntry(request *core.Request) {
-	t := g.tabs[request.ID+".json"]
+	t := g.tabs[request.ID]
 	if t == nil || t.collection == nil || t.colEntry == nil {
 		return
 	}
@@ -253,7 +253,7 @@ func (g *gui) addToCollectionDialog(request *core.Request) {
 
 		// Like save-as: the tab now mirrors its new collection entry, so
 		// later sends keep the snapshot fresh.
-		if t := g.tabs[request.ID+".json"]; t != nil {
+		if t := g.tabs[request.ID]; t != nil {
 			t.collection = col
 			t.colEntry = entry
 		}

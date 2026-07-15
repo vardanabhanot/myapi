@@ -29,7 +29,7 @@ type gui struct {
 	tabs           map[string]*tab
 	doctabs        *container.DocTabs
 	sidebar        *fyne.Container
-	requestHistory *[]map[string]string
+	requestHistory []*core.HistoryEntry
 	requestList    *widget.List
 	envStore       *core.EnvStore
 	envList        *widget.List
@@ -79,12 +79,11 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 
 	g.doctabs.OnSelected = func(tabItem *container.TabItem) {
 		// The structure of g.tabs is a map of [tabID]DocTabTab Items
-		// And the structur of g.requestHistory is a map of [tabID][historyData]
 		// List reuquestList does not corelate to openedTab thats why we need to make a check through requestHistory
 		for tabID, openedTab := range g.tabs {
 			if openedTab.item == tabItem {
-				for index, history := range *g.requestHistory {
-					if history["ID"] == tabID {
+				for index, history := range g.requestHistory {
+					if history.ID == tabID {
 						g.requestList.Select(index)
 						return
 					}
@@ -176,6 +175,11 @@ func (g *gui) dispatchShortcut(s fyne.Shortcut) bool {
 type appEntry struct {
 	widget.Entry
 	g *gui
+
+	// onPasteCurl intercepts a pasted "curl ..." command; set only on the
+	// URL bar. Return true to consume the paste. Ctrl+V only — the
+	// right-click menu paste bypasses TypedShortcut.
+	onPasteCurl func(cmd string) bool
 }
 
 func (g *gui) newAppEntry() *appEntry {
@@ -185,6 +189,13 @@ func (g *gui) newAppEntry() *appEntry {
 }
 
 func (e *appEntry) TypedShortcut(s fyne.Shortcut) {
+	if ps, ok := s.(*fyne.ShortcutPaste); ok && e.onPasteCurl != nil {
+		if cmd := strings.TrimSpace(ps.Clipboard.Content()); strings.HasPrefix(cmd, "curl ") {
+			if e.onPasteCurl(cmd) {
+				return
+			}
+		}
+	}
 	if e.g.dispatchShortcut(s) {
 		return
 	}
@@ -240,14 +251,29 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 	}
 
 	// Pushing the tab item to the open tab map
-	g.tabs[request.ID+".json"] = &tab{item: nil, bindings: &bindings{}, request: request}
+	g.tabs[request.ID] = &tab{item: nil, bindings: &bindings{}, request: request}
 
-	requestUI := g.makeRequestUI(g.tabs[request.ID+".json"].request)
-	response := g.makeResponseUI(g.tabs[request.ID+".json"].request)
+	requestUI := g.makeRequestUI(g.tabs[request.ID].request)
+	response := g.makeResponseUI(g.tabs[request.ID].request)
 	g.urlInput = g.newAppEntry()
 	g.urlInput.SetPlaceHolder("Request URL")
 	if request.URL != "" {
 		g.urlInput.Text = request.URL
+	}
+
+	// Paste a "Copy as cURL" command into the URL bar → new tab with the
+	// imported request, current tab untouched.
+	g.urlInput.onPasteCurl = func(cmd string) bool {
+		parsed, err := core.ParseCurl(cmd)
+		if err != nil {
+			dialog.NewError(err, *g.Window).Show()
+			return true // consume: a broken multiline command is useless in a URL field
+		}
+
+		newTab := g.makeTab(parsed)
+		g.doctabs.Append(newTab)
+		g.doctabs.Select(newTab)
+		return true
 	}
 
 	g.urlInput.OnChanged = func(s string) {
@@ -281,7 +307,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 		// Keep the tab title's method prefix in sync; only when this tab
 		// is the selected one (SetSelected also fires during makeTab)
-		if t := g.tabs[request.ID+".json"]; t != nil && t.item != nil && g.doctabs.Selected() == t.item {
+		if t := g.tabs[request.ID]; t != nil && t.item != nil && g.doctabs.Selected() == t.item {
 			title := tabTitle(value, request.URL)
 			if request.IsDirty {
 				title += " *"
@@ -332,11 +358,11 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 			// Updating the open tab list with our new tab data
 			// This only should happen for the first request on a new tab
-			if g.tabs[request.ID+".json"] == nil {
-				g.tabs[request.ID+".json"] = &tab{item: g.doctabs.Selected(), bindings: &bindings{}, request: &core.Request{}}
+			if g.tabs[request.ID] == nil {
+				g.tabs[request.ID] = &tab{item: g.doctabs.Selected(), bindings: &bindings{}, request: &core.Request{}}
 			}
 
-			bindings := g.tabs[request.ID+".json"].bindings
+			bindings := g.tabs[request.ID].bindings
 			if request.Method == "HEAD" {
 				res.Body = "Head Request do not have a body"
 			}
@@ -405,7 +431,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 		makeRequest.Tapped(&fyne.PointEvent{})
 	}
 
-	g.tabs[request.ID+".json"].send = func() {
+	g.tabs[request.ID].send = func() {
 		makeRequest.Tapped(&fyne.PointEvent{})
 	}
 
@@ -432,7 +458,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 
 	tabItem := container.NewTabItem(tabName, container.NewBorder(requestAction, nil, nil, nil, requestResponseContainer))
 
-	g.tabs[request.ID+".json"].item = tabItem
+	g.tabs[request.ID].item = tabItem
 
 	return tabItem
 }

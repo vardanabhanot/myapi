@@ -8,9 +8,9 @@ import (
 	"sync"
 )
 
-// Environments persist in the user config dir, NOT the cache dir: history
-// owns that directory (ListHistory lists every file in it and ClearHistory
-// deletes them all).
+// Environments persist in the config dir root. History lives in its own
+// history/ subdir there — ListHistory lists every .json in its dir and
+// ClearHistory deletes them all, so they must not share a directory.
 
 type Environment struct {
 	Name      string      `json:"Name"`
@@ -86,7 +86,7 @@ func ApplyEnv(s string) string {
 }
 
 // configFile resolves (and ensures) the app's config dir for a settings
-// file — environments, collections. Distinct from the cache dir history owns.
+// file — environments, collections. History lives in the history/ subdir.
 func configFile(name string) (string, error) {
 	dir, err := os.UserConfigDir()
 

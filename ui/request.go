@@ -32,7 +32,7 @@ type bodyOptHolder struct {
 
 func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	var status, size, resTime, bodyResponse string
-	bindings := g.tabs[request.ID+".json"].bindings
+	bindings := g.tabs[request.ID].bindings
 	bindings.status = binding.BindString(&status)
 	bindings.size = binding.BindString(&size)
 	bindings.time = binding.BindString(&resTime)
