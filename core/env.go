@@ -85,6 +85,39 @@ func ApplyEnv(s string) string {
 	return s
 }
 
+// ResolveEnv returns a deep copy with {{var}} placeholders substituted in
+// the same fields SendRequest substitutes at send time. Used for codegen so
+// the emitted snippet is runnable as-is.
+func (r *Request) ResolveEnv() *Request {
+	c := r.Clone()
+	c.URL = ApplyEnv(c.URL)
+
+	applyRows := func(rows *[]FormType) {
+		if rows == nil {
+			return
+		}
+		for i, row := range *rows {
+			(*rows)[i].Key = ApplyEnv(row.Key)
+			(*rows)[i].Value = ApplyEnv(row.Value)
+		}
+	}
+	applyRows(c.Headers)
+	applyRows(c.QueryParams)
+	applyRows(c.Body.Form)
+
+	c.Body.Json = ApplyEnv(c.Body.Json)
+	c.Body.Xml = ApplyEnv(c.Body.Xml)
+	c.Body.Text = ApplyEnv(c.Body.Text)
+
+	if c.Auth != nil {
+		c.Auth.BasicUser = ApplyEnv(c.Auth.BasicUser)
+		c.Auth.BasicPass = ApplyEnv(c.Auth.BasicPass)
+		c.Auth.BearerAuth = ApplyEnv(c.Auth.BearerAuth)
+	}
+
+	return c
+}
+
 // configFile resolves (and ensures) the app's config dir for a settings
 // file — environments, collections. History lives in the history/ subdir.
 func configFile(name string) (string, error) {

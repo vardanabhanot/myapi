@@ -2,6 +2,8 @@ package codegen
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/vardanabhanot/myapi/core"
 )
@@ -22,6 +24,7 @@ func GetSupportedLanguages() []string {
 	for name := range registry {
 		langs = append(langs, name)
 	}
+	sort.Strings(langs) // map order is random; keep the dropdown stable
 	return langs
 }
 
@@ -30,5 +33,14 @@ func GenerateCode(language string, request *core.Request) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unsupported language: %s", language)
 	}
-	return gen.Generate(request), nil
+	// Resolve {{var}} placeholders once here so every generator emits
+	// runnable snippets instead of raw placeholders.
+	return gen.Generate(request.ResolveEnv()), nil
+}
+
+// scriptQuote single-quotes s for JavaScript and Python — the two share
+// the same escapes for single-quoted string literals.
+func scriptQuote(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `'`, `\'`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
+	return "'" + r.Replace(s) + "'"
 }
