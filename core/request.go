@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -57,6 +59,7 @@ type FormType struct {
 	Checked bool   `json:"Checked"`
 	Key     string `json:"Key"`
 	Value   string `json:"Value"`
+	IsFile  bool   `json:"IsFile,omitempty"` // multipart Form rows only: Value is a file path
 }
 
 type Response struct {
@@ -126,13 +129,35 @@ func (r *Request) SendRequest(ctx context.Context) (*Response, error) {
 			req.Body = io.NopCloser(bytes.NewBufferString(ApplyEnv(r.Body.Text)))
 
 		case "Form":
+			// ponytail: whole multipart body is buffered in RAM; io.Pipe
+			// streaming if huge uploads ever matter.
 			var b bytes.Buffer
 			writer := multipart.NewWriter(&b)
 
 			for _, v := range *r.Body.Form {
-				if v.Checked {
-					writer.WriteField(ApplyEnv(v.Key), ApplyEnv(v.Value))
+				if !v.Checked {
+					continue
 				}
+
+				if v.IsFile {
+					path := ApplyEnv(v.Value)
+					f, err := os.Open(path)
+					if err != nil {
+						return nil, err
+					}
+
+					part, err := writer.CreateFormFile(ApplyEnv(v.Key), filepath.Base(path))
+					if err == nil {
+						_, err = io.Copy(part, f)
+					}
+					f.Close()
+					if err != nil {
+						return nil, err
+					}
+					continue
+				}
+
+				writer.WriteField(ApplyEnv(v.Key), ApplyEnv(v.Value))
 			}
 
 			req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -143,7 +168,7 @@ func (r *Request) SendRequest(ctx context.Context) (*Response, error) {
 		case "URL Encoded":
 			values := url.Values{}
 			for _, v := range *r.Body.Form {
-				if v.Checked && v.Key != "" {
+				if v.Checked && v.Key != "" && !v.IsFile { // file rows can't be urlencoded
 					values.Add(ApplyEnv(v.Key), ApplyEnv(v.Value))
 				}
 			}

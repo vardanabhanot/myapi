@@ -5,12 +5,12 @@ import (
 	"log"
 	"net/url"
 	"strconv"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/vardanabhanot/myapi/core"
@@ -75,13 +75,13 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		*request.Headers = append(*request.Headers, core.FormType{Key: "Connection", Value: "keep-alive", Checked: true})
 	}
 
-	headerFieldss := g.headerBlock(request.Headers)
+	headerFields := g.headerBlock(request.Headers)
 
 	headerHeading := sectionHeader("Request Headers")
 
 	addHeaderBtn := widget.NewButtonWithIcon("Add", theme.ContentAddIcon(), func() {
 		*request.Headers = append(*request.Headers, core.FormType{Checked: true})
-		headerFieldss.Refresh()
+		headerFields.Refresh()
 	})
 	addHeaderBtn.Importance = widget.LowImportance
 
@@ -89,7 +89,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		container.NewBorder(
 			container.NewBorder(nil, nil, headerHeading, addHeaderBtn, nil),
 			nil, nil, nil,
-			headerFieldss,
+			headerFields,
 		),
 	)
 
@@ -398,18 +398,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 	})
 
 	languageSelect.SetSelectedIndex(0)
-	var copyCode *widget.Button
-
-	copyCode = widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
-		code := codePreview.Text()
-		copyCode.SetIcon(theme.ConfirmIcon())
-		fyne.CurrentApp().Clipboard().SetContent(code)
-		time.AfterFunc(2*time.Second, func() {
-			fyne.Do(func() {
-				copyCode.SetIcon(theme.ContentCopyIcon())
-			})
-		})
-	})
+	copyCode := copyFeedbackButton(func() string { return codePreview.Text() })
 
 	codePreviewContainer = container.NewPadded(container.NewVBox(
 		container.NewBorder(nil, nil, nil, copyCode, languageSelect),
@@ -469,9 +458,9 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 		return len(*queries)
 	}, func() fyne.CanvasObject {
 		parameterEntry := widget.NewEntry()
-		parameterEntry.SetPlaceHolder("parameter")
+		parameterEntry.SetPlaceHolder("Parameter")
 		valueEntry := widget.NewEntry()
-		valueEntry.SetPlaceHolder("value")
+		valueEntry.SetPlaceHolder("Value")
 
 		return container.NewBorder(nil, nil,
 			widget.NewCheck("", func(b bool) {}),
@@ -500,11 +489,6 @@ func (g *gui) queryBlock(queries *[]core.FormType) fyne.CanvasObject {
 		}
 
 		btn := ctx.Objects[2].(*widget.Button)
-		if lii == 0 {
-			btn.Hide()
-		} else {
-			btn.Show()
-		}
 		btn.OnTapped = func() {
 			*queries = append((*queries)[:lii], (*queries)[lii+1:]...)
 			list.Refresh()
@@ -630,7 +614,7 @@ func (g *gui) headerBlock(headers *[]core.FormType) fyne.CanvasObject {
 		parameterEntry := widget.NewEntry()
 		parameterEntry.SetPlaceHolder("Header")
 		valueEntry := widget.NewEntry()
-		valueEntry.SetPlaceHolder("value")
+		valueEntry.SetPlaceHolder("Value")
 
 		return container.NewBorder(nil, nil,
 			widget.NewCheck("", func(b bool) {}),
@@ -696,13 +680,16 @@ func (g *gui) formBlock(fields *[]core.FormType) fyne.CanvasObject {
 		return len(*fields)
 	}, func() fyne.CanvasObject {
 		parameterEntry := widget.NewEntry()
-		parameterEntry.SetPlaceHolder("Form")
+		parameterEntry.SetPlaceHolder("Key")
 		valueEntry := widget.NewEntry()
-		valueEntry.SetPlaceHolder("value")
+		valueEntry.SetPlaceHolder("Value")
 
 		return container.NewBorder(nil, nil,
 			widget.NewCheck("", func(b bool) {}),
-			widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {}),
+			container.NewHBox(
+				widget.NewButtonWithIcon("", theme.FileIcon(), func() {}),
+				widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {}),
+			),
 			container.NewGridWithColumns(2, parameterEntry, valueEntry),
 		)
 	}, func(lii widget.ListItemID, co fyne.CanvasObject) {
@@ -717,7 +704,37 @@ func (g *gui) formBlock(fields *[]core.FormType) fyne.CanvasObject {
 			(*fields)[lii].Checked = b
 		}
 
-		btn := ctx.Objects[2].(*widget.Button)
+		btns := ctx.Objects[2].(*fyne.Container)
+
+		// File toggle: pick a file to make this a file row (value = path),
+		// tap again to clear back to a text field. Only "Form" (multipart)
+		// sends file rows; URL Encoded skips them at send time.
+		fileBtn := btns.Objects[0].(*widget.Button)
+		if (*fields)[lii].IsFile {
+			fileBtn.SetIcon(theme.CancelIcon())
+		} else {
+			fileBtn.SetIcon(theme.FileIcon())
+		}
+		fileBtn.OnTapped = func() {
+			if (*fields)[lii].IsFile {
+				(*fields)[lii].IsFile = false
+				(*fields)[lii].Value = ""
+				list.Refresh()
+				return
+			}
+
+			dialog.ShowFileOpen(func(rc fyne.URIReadCloser, err error) {
+				if err != nil || rc == nil {
+					return
+				}
+				rc.Close() // only the path is needed; SendRequest opens it fresh
+				(*fields)[lii].IsFile = true
+				(*fields)[lii].Value = rc.URI().Path()
+				list.Refresh()
+			}, *g.Window)
+		}
+
+		btn := btns.Objects[1].(*widget.Button)
 		btn.OnTapped = func() {
 			(*fields) = append((*fields)[:lii], (*fields)[lii+1:]...)
 			list.Refresh()
@@ -746,6 +763,13 @@ func (g *gui) formBlock(fields *[]core.FormType) fyne.CanvasObject {
 		value := entryCtx.Objects[1].(*widget.Entry)
 		value.OnChanged = nil
 		value.SetText((*fields)[lii].Value)
+		// File rows show the picked path read-only; recycled rows must be
+		// re-enabled explicitly.
+		if (*fields)[lii].IsFile {
+			value.Disable()
+		} else {
+			value.Enable()
+		}
 		value.OnChanged = func(s string) {
 			(*fields)[lii].Value = s
 			if s != "" {

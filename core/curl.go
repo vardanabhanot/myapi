@@ -84,7 +84,9 @@ func ParseCurl(cmd string) (*Request, error) {
 				return nil, err
 			}
 			key, val, _ := strings.Cut(v, "=")
-			formRows = append(formRows, FormType{Checked: true, Key: key, Value: val})
+			// curl's -F key=@path means "upload the file at path"
+			isFile := strings.HasPrefix(val, "@")
+			formRows = append(formRows, FormType{Checked: true, Key: key, Value: strings.TrimPrefix(val, "@"), IsFile: isFile})
 
 		case "-u", "--user":
 			v, err := next(&i, t)

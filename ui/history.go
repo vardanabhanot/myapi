@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"image/color"
 	"strings"
 
@@ -47,13 +46,15 @@ func (g *gui) renderHistoryContent() {
 			return len(g.requestHistory)
 		},
 		func() fyne.CanvasObject {
-			// Pill background
-			pillBg := canvas.NewRectangle(color.NRGBA{R: 72, G: 180, B: 97, A: 40})
+			// Pill background; colors are placeholders, the update callback
+			// sets the real per-method color
+			mCol := methodColor("GET")
+			pillBg := canvas.NewRectangle(color.NRGBA{R: mCol.R, G: mCol.G, B: mCol.B, A: 40})
 			pillBg.CornerRadius = 4
 			pillBg.SetMinSize(fyne.NewSize(42, 20))
 
 			// Method text label
-			label := canvas.NewText("GET", color.NRGBA{R: 72, G: 180, B: 97, A: 255})
+			label := canvas.NewText("GET", mCol)
 			label.Alignment = fyne.TextAlignCenter
 			label.TextStyle.Bold = true
 			label.TextSize = 10
@@ -93,35 +94,10 @@ func (g *gui) renderHistoryContent() {
 			timeContainer := optionsStack.Objects[0].(*fyne.Container)
 
 			optionsStack.Objects[1].(*tappableIcon).onTapped = func() {
-				var items []*fyne.MenuItem
-				delete := fyne.NewMenuItem("Delete", func() {
-					confirmShow := dialog.NewConfirm("Delete Request", "Are you sure you want to delete this request", func(delete bool) {
-						if !delete {
-							return
-						}
-
-						err := core.DeleteHistory(g.requestHistory[i].ID)
-
-						if err != nil {
-							dialog.NewError(err, *g.Window)
-							return
-						}
-
-						g.requestHistory = append(g.requestHistory[:i], g.requestHistory[i+1:]...)
-						g.requestList.Refresh()
-					}, (*g.Window))
-
-					confirmShow.Show()
-
-				})
-
-				items = append(items, delete)
-
 				clone := fyne.NewMenuItem("Clone", func() {
-
 					if err := core.CloneHistory(g.requestHistory[i].ID); err != nil {
-						fmt.Println(err)
-						dialog.NewError(err, (*g.Window))
+						dialog.NewError(err, *g.Window).Show()
+						return
 					}
 
 					go func() {
@@ -130,11 +106,25 @@ func (g *gui) renderHistoryContent() {
 							g.requestList.Refresh()
 						})
 					}()
-
 				})
-				items = append(items, clone)
 
-				showIconMenu(optionsStack.Objects[1].(*tappableIcon), items...)
+				del := fyne.NewMenuItem("Delete", func() {
+					dialog.NewConfirm("Delete Request", "Delete this request from history? This cannot be undone.", func(confirmed bool) {
+						if !confirmed {
+							return
+						}
+
+						if err := core.DeleteHistory(g.requestHistory[i].ID); err != nil {
+							dialog.NewError(err, *g.Window).Show()
+							return
+						}
+
+						g.requestHistory = append(g.requestHistory[:i], g.requestHistory[i+1:]...)
+						g.requestList.Refresh()
+					}, *g.Window).Show()
+				})
+
+				showIconMenu(optionsStack.Objects[1].(*tappableIcon), clone, del)
 			}
 
 			// Update pill color and text
@@ -169,7 +159,7 @@ func (g *gui) renderHistoryContent() {
 		request, err := core.LoadRequest(g.requestHistory[id].ID)
 
 		if err != nil {
-			dialog.NewError(err, *g.Window)
+			dialog.NewError(err, *g.Window).Show()
 			return
 		}
 

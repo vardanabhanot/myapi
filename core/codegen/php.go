@@ -82,6 +82,12 @@ curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);`)
 			var fields []string
 			for _, f := range *request.Body.Form {
 				if f.Checked && f.Key != "" {
+					if f.IsFile {
+						if request.BodyType == "Form" {
+							fields = append(fields, "\t"+phpQuote(f.Key)+" => new CURLFile("+phpQuote(f.Value)+"),")
+						}
+						continue // urlencoded can't carry files
+					}
 					fields = append(fields, "\t"+phpQuote(f.Key)+" => "+phpQuote(f.Value)+",")
 				}
 			}

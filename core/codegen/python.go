@@ -76,6 +76,10 @@ func (g PythonGenerator) Generate(request *core.Request) string {
 			var fields []string
 			for _, f := range *request.Body.Form {
 				if f.Checked && f.Key != "" {
+					if f.IsFile {
+						fields = append(fields, "\t\t"+scriptQuote(f.Key)+": open("+scriptQuote(f.Value)+", 'rb'),")
+						continue
+					}
 					// (None, value) is the requests idiom for a plain
 					// multipart field without a filename
 					fields = append(fields, "\t\t"+scriptQuote(f.Key)+": (None, "+scriptQuote(f.Value)+"),")
@@ -89,7 +93,7 @@ func (g PythonGenerator) Generate(request *core.Request) string {
 		if request.Body.Form != nil {
 			var fields []string
 			for _, f := range *request.Body.Form {
-				if f.Checked && f.Key != "" {
+				if f.Checked && f.Key != "" && !f.IsFile {
 					fields = append(fields, "\t\t"+scriptQuote(f.Key)+": "+scriptQuote(f.Value)+",")
 				}
 			}

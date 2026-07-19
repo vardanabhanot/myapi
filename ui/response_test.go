@@ -16,6 +16,30 @@ func TestSafeCut(t *testing.T) {
 	}
 }
 
+func TestBodyKind(t *testing.T) {
+	pngHeader := "\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 20)
+	cases := []struct {
+		contentType, body, want string
+	}{
+		{"image/png", pngHeader, "image"},
+		{"image/jpeg; charset=binary", "\xff\xd8\xff", "image"},
+		{"image/svg+xml", "<svg/>", "text"},   // svg reads better as XML
+		{"image/webp", "RIFF....WEBP", "binary"}, // Fyne can't decode webp
+		{"application/json", `{"a":1}`, "text"},
+		{"text/html; charset=utf-8", "<html>", "text"},
+		{"application/pdf", "%PDF-1.4", "binary"},
+		{"", pngHeader, "image"},                        // sniffed
+		{"application/octet-stream", "plain words", "text"}, // sniffed back to text
+		{"application/x-custom", "ab\x00cd", "binary"},  // NUL byte
+		{"application/x-custom", "abcd", "text"},
+	}
+	for _, c := range cases {
+		if got := bodyKind(c.contentType, c.body); got != c.want {
+			t.Errorf("bodyKind(%q, %.10q) = %q, want %q", c.contentType, c.body, got, c.want)
+		}
+	}
+}
+
 func TestSoftWrap(t *testing.T) {
 	if got := softWrap("short\nlines"); got != "short\nlines" {
 		t.Errorf("short input changed: %q", got)

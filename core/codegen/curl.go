@@ -75,14 +75,18 @@ func (g CurlGenerator) Generate(request *core.Request) string {
 		if request.Body.Form != nil {
 			for _, f := range *request.Body.Form {
 				if f.Checked && f.Key != "" {
-					parts = append(parts, "-F "+shellQuote(f.Key+"="+f.Value))
+					value := f.Value
+					if f.IsFile {
+						value = "@" + value
+					}
+					parts = append(parts, "-F "+shellQuote(f.Key+"="+value))
 				}
 			}
 		}
 	case "URL Encoded":
 		if request.Body.Form != nil {
 			for _, f := range *request.Body.Form {
-				if f.Checked && f.Key != "" {
+				if f.Checked && f.Key != "" && !f.IsFile {
 					parts = append(parts, "--data-urlencode "+shellQuote(f.Key+"="+f.Value))
 				}
 			}

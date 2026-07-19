@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/vardanabhanot/myapi/core"
@@ -77,12 +78,21 @@ func (g JSGenerator) Generate(request *core.Request) string {
 	case "Form":
 		if request.Body.Form != nil {
 			var appends []string
+			hasFile := false
 			for _, f := range *request.Body.Form {
 				if f.Checked && f.Key != "" {
+					if f.IsFile {
+						hasFile = true
+						appends = append(appends, "form.append("+scriptQuote(f.Key)+", new Blob([fs.readFileSync("+scriptQuote(f.Value)+")]), "+scriptQuote(filepath.Base(f.Value))+");")
+						continue
+					}
 					appends = append(appends, "form.append("+scriptQuote(f.Key)+", "+scriptQuote(f.Value)+");")
 				}
 			}
 			if len(appends) > 0 {
+				if hasFile {
+					pre = append(pre, "const fs = require('node:fs'); // file fields need Node")
+				}
 				pre = append(pre, "const form = new FormData();")
 				pre = append(pre, appends...)
 				bodyLine = "\tbody: form," // fetch sets the multipart Content-Type itself
@@ -92,7 +102,7 @@ func (g JSGenerator) Generate(request *core.Request) string {
 		if request.Body.Form != nil {
 			var fields []string
 			for _, f := range *request.Body.Form {
-				if f.Checked && f.Key != "" {
+				if f.Checked && f.Key != "" && !f.IsFile {
 					fields = append(fields, "\t\t"+scriptQuote(f.Key)+": "+scriptQuote(f.Value)+",")
 				}
 			}

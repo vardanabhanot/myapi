@@ -106,7 +106,28 @@ func (m BaseTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) co
 	return theme.DefaultTheme().Color(name, variant)
 }
 
+// Chevron replacements for Fyne's stemmed MoveDown/MoveUp arrows (material
+// expand_more / expand_less). Overridden globally — Tree's branchIcon
+// re-resolves via theme.Current() on every Refresh (hover/select), so a
+// scoped ThemeOverride gets reverted. NavigateNext is already a ">" chevron.
+var chevronDownIcon = theme.NewThemedResource(fyne.NewStaticResource("chevron-down.svg",
+	[]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>`)))
+
+var chevronUpIcon = theme.NewThemedResource(fyne.NewStaticResource("chevron-up.svg",
+	[]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></svg>`)))
+
+var chevronRightIcon = theme.NewThemedResource(fyne.NewStaticResource("chevron-right.svg",
+	[]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>`)))
+
 func (m BaseTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
+	switch name {
+	case theme.IconNameMoveDown:
+		return chevronDownIcon
+	case theme.IconNameMoveUp:
+		return chevronUpIcon
+	case theme.IconNameNavigateNext:
+		return chevronRightIcon
+	}
 	return theme.DefaultTheme().Icon(name)
 }
 

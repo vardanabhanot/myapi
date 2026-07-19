@@ -58,6 +58,8 @@ func (g *gui) makeEnvContent() *fyne.Container {
 		if err := core.SaveEnvStore(g.envStore); err != nil {
 			dialog.NewError(err, *g.Window).Show()
 		}
+
+		g.syncEnvSelect()
 	}
 
 	g.selectActiveEnv()
@@ -96,6 +98,33 @@ func (g *gui) selectActiveEnv() {
 	}
 
 	g.envList.Select(index)
+}
+
+// syncEnvSelect rebuilds the footer Select's options from the env store and
+// mirrors the active env. Writes Selected directly (not SetSelected) so no
+// OnChanged fires — that's the guard against a footer<->sidebar update loop.
+func (g *gui) syncEnvSelect() {
+	if g.envSelect == nil { // sidebar builds before the footer
+		return
+	}
+
+	opts := []string{"No Environment"}
+	index := 0
+	for i, env := range g.envStore.Envs {
+		name := env.Name
+		if r := []rune(name); len(r) > titleClip {
+			name = string(r[:titleClip]) + "…"
+		}
+		opts = append(opts, name)
+
+		if env.Name == g.envStore.Active {
+			index = i + 1
+		}
+	}
+
+	g.envSelect.Options = opts
+	g.envSelect.Selected = opts[index]
+	g.envSelect.Refresh()
 }
 
 // editEnvDialog edits an environment in place: the name entry and formBlock
@@ -155,6 +184,7 @@ func (g *gui) editEnvDialog(env *core.Environment) {
 
 		g.envList.Refresh()
 		g.selectActiveEnv()
+		g.syncEnvSelect() // rename/delete may not move the list index
 	})
 	d.Resize(fyne.NewSize(560, 460))
 	d.Show()

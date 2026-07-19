@@ -28,7 +28,6 @@ func newTappableIcon(resource fyne.Resource, tapped func()) *tappableIcon {
 	}
 	t.icon = canvas.NewImageFromResource(resource)
 	t.icon.FillMode = canvas.ImageFillContain
-	t.icon.SetMinSize(fyne.NewSquareSize(50))
 	t.background = canvas.NewCircle(color.Transparent)
 
 	t.ExtendBaseWidget(t)
@@ -105,7 +104,7 @@ func showIconMenu(icon *tappableIcon, items ...*fyne.MenuItem) {
 	}
 
 	popUpMenu.ShowAtPosition(popUpPos)
-	popUpMenu.Resize(fyne.NewSize(120, popUpMenu.MinSize().Height))
+	popUpMenu.Resize(fyne.NewSize(fyne.Max(120, popUpMenu.MinSize().Width), popUpMenu.MinSize().Height))
 }
 
 func (t *tappableIcon) updateBackground() {

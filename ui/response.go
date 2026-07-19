@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
@@ -53,11 +54,85 @@ func saveFileName(rawURL string, headers []string) string {
 			ext = ".css"
 		case "application/javascript", "text/javascript":
 			ext = ".js"
+		case "image/png":
+			ext = ".png"
+		case "image/jpeg":
+			ext = ".jpg"
+		case "image/gif":
+			ext = ".gif"
+		case "image/webp":
+			ext = ".webp"
+		case "image/svg+xml":
+			ext = ".svg"
+		case "application/pdf":
+			ext = ".pdf"
+		case "application/zip":
+			ext = ".zip"
+		case "application/octet-stream":
+			ext = ".bin"
 		}
 		break
 	}
 
 	return name + ext
+}
+
+// bodyKind classifies a response body for display: "image" (Fyne can decode
+// and preview it), "binary" (not human-readable, show a placeholder), or
+// "text" (the normal highlighted grid).
+func bodyKind(contentType, body string) string {
+	ct, _, _ := strings.Cut(contentType, ";")
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	if ct == "" || ct == "application/octet-stream" {
+		head := body
+		if len(head) > 512 {
+			head = head[:512]
+		}
+		ct = strings.ToLower(http.DetectContentType([]byte(head)))
+		ct, _, _ = strings.Cut(ct, ";")
+	}
+
+	switch {
+	case ct == "image/png" || ct == "image/jpeg" || ct == "image/gif":
+		return "image" // the formats Fyne decodes natively; svg stays text (XML view)
+	case strings.HasPrefix(ct, "text/"),
+		strings.Contains(ct, "json"), strings.Contains(ct, "xml"),
+		strings.Contains(ct, "javascript"), strings.Contains(ct, "html"),
+		strings.Contains(ct, "urlencoded"):
+		return "text"
+	case strings.HasPrefix(ct, "image/"), strings.HasPrefix(ct, "audio/"),
+		strings.HasPrefix(ct, "video/"), strings.HasPrefix(ct, "font/"),
+		ct == "application/pdf", ct == "application/wasm",
+		strings.Contains(ct, "zip"), strings.Contains(ct, "compressed"):
+		return "binary"
+	}
+
+	// Unknown application/* type: a NUL byte in the head means binary
+	head := body
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	if strings.ContainsRune(head, 0) {
+		return "binary"
+	}
+	return "text"
+}
+
+// copyFeedbackButton is the one copy-to-clipboard control: icon button that
+// copies getText's result and flashes a confirm icon for 2s.
+func copyFeedbackButton(getText func() string) *widget.Button {
+	var b *widget.Button
+	b = widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+		fyne.CurrentApp().Clipboard().SetContent(getText())
+		b.SetIcon(theme.ConfirmIcon())
+		time.AfterFunc(2*time.Second, func() {
+			fyne.Do(func() {
+				b.SetIcon(theme.ContentCopyIcon())
+			})
+		})
+	})
+	b.Importance = widget.LowImportance
+	return b
 }
 
 // safeCut truncates s to at most max bytes without splitting a rune.
@@ -168,28 +243,15 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 	headerTable := keyValueTable(bindings.headers)
 	cookieTable := keyValueTable(bindings.cookies)
 
-	// Copy Icon to copy the whole response to the clipboard
-	// Gets updated to a check icon when clicked, for better visual feedback
-	var copyIcon *tappableIcon
-	copyIcon = newTappableIcon(theme.ContentCopyIcon(), func() {
+	copyIcon := copyFeedbackButton(func() string {
 		original, _ := bindings.body.Get() // not responseTab.Text(): that contains soft-wrap newlines
-		fyne.CurrentApp().Clipboard().SetContent(original)
-		copyIcon.icon.Resource = theme.ConfirmIcon()
-		copyIcon.Refresh()
-
-		time.AfterFunc(2*time.Second, func() {
-			fyne.Do(func() {
-				copyIcon.icon.Resource = theme.ContentCopyIcon()
-				copyIcon.Refresh()
-			})
-		})
+		return original
 	})
 	copyIcon.Hide()
 
 	// Save-to-file. ponytail: writes the retained body (2MB cap, 4MB read
 	// cap) — stream-to-file download is a later feature.
-	var saveIcon *tappableIcon
-	saveIcon = newTappableIcon(theme.DownloadIcon(), func() {
+	saveIcon := widget.NewButtonWithIcon("", theme.DownloadIcon(), func() {
 		body, _ := bindings.body.Get()
 		if body == "" {
 			return
@@ -208,9 +270,11 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 		fileSave.SetFileName(saveFileName(request.URL, headerMap))
 		fileSave.Show()
 	})
+	saveIcon.Importance = widget.LowImportance
 	saveIcon.Hide()
 
-	searchIcon := newTappableIcon(theme.SearchIcon(), search.show)
+	searchIcon := widget.NewButtonWithIcon("", theme.SearchIcon(), search.show)
+	searchIcon.Importance = widget.LowImportance
 	searchIcon.Hide()
 
 	// Whitespace toggle button
@@ -256,8 +320,12 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 	// scope on every apply/refresh and Fyne never evicts it, so wrapping
 	// refreshing widgets leaks font faces (the response area refreshes on
 	// every request). Padding comes from the global theme instead.
+	// Image responses render here instead of the TextGrid
+	imageHolder := container.NewStack()
+	imageHolder.Hide()
+
 	tabs := container.NewAppTabs(
-		container.NewTabItem("Response", responseTab),
+		container.NewTabItem("Response", container.NewStack(responseTab, imageHolder)),
 		container.NewTabItem("Headers", headerTable),
 		container.NewTabItem("Cookies", cookieTable),
 	)
@@ -293,39 +361,80 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 		// If empty, clear the TextGrid to free memory and return
 		if responseBodyString == "" {
 			responseTab.SetText("")
+			imageHolder.Objects = nil
+			imageHolder.Hide()
 			search.contentChanged()
 			return
-		}
-
-		// Display cap: highlighted TextGrid rows cost far more than raw bytes
-		// (a TextGridCell per rune plus a style pointer), so keep this modest.
-		// Copy always returns the full retained body.
-		const maxDisplayChars = 150_000
-		if len(responseBodyString) > maxDisplayChars {
-			responseBodyString = safeCut(responseBodyString, maxDisplayChars) + "\n\n... [Display truncated to keep the UI responsive. Copy returns the full retained body.]"
 		}
 
 		responsePlaceholder.Hide()
 		tabs.Show()
 
-		if showRaw {
-			responseTab.SetText(softWrap(responseBodyString))
+		var contentType string
+		for _, h := range headerMap {
+			if k, v, ok := strings.Cut(h, "||"); ok && strings.EqualFold(k, "Content-Type") {
+				contentType = v
+				break
+			}
+		}
+
+		kind := "text"
+		if !showRaw {
+			kind = bodyKind(contentType, responseBodyString)
+		}
+
+		// The 2MB retain cap in gui.go appends a truncation note, which
+		// corrupts image bytes — fall back to the binary placeholder.
+		if kind == "image" {
+			tail := responseBodyString
+			if len(tail) > 100 {
+				tail = tail[len(tail)-100:]
+			}
+			if strings.Contains(tail, "[Truncated:") {
+				kind = "binary"
+			}
+		}
+
+		if kind == "image" {
+			img := canvas.NewImageFromResource(fyne.NewStaticResource("response", []byte(responseBodyString)))
+			img.FillMode = canvas.ImageFillContain
+			imageHolder.Objects = []fyne.CanvasObject{img}
+			imageHolder.Show()
+			responseTab.Hide()
+			responseTab.SetText("") // free the grid; Raw re-renders the bytes
 		} else {
-			var contentType string
-			for _, h := range headerMap {
-				if k, v, ok := strings.Cut(h, "||"); ok && strings.EqualFold(k, "Content-Type") {
-					contentType = v
-					break
-				}
+			imageHolder.Objects = nil
+			imageHolder.Hide()
+			responseTab.Show()
+
+			// Display cap: highlighted TextGrid rows cost far more than raw bytes
+			// (a TextGridCell per rune plus a style pointer), so keep this modest.
+			// Copy always returns the full retained body.
+			const maxDisplayChars = 150_000
+			if len(responseBodyString) > maxDisplayChars {
+				responseBodyString = safeCut(responseBodyString, maxDisplayChars) + "\n\n... [Display truncated to keep the UI responsive. Copy returns the full retained body.]"
 			}
 
-			lang := detectLang(contentType, responseBodyString)
-			display := formatBody(responseBodyString, lang)
-			if rows := highlightGridRows(display, lang); rows != nil {
-				responseTab.Rows = rows
-				responseTab.Refresh()
-			} else {
-				responseTab.SetText(softWrap(display))
+			switch {
+			case kind == "binary":
+				ct, _, _ := strings.Cut(contentType, ";")
+				ct = strings.TrimSpace(ct)
+				if ct == "" {
+					ct = "unknown type"
+				}
+				sizeStr, _ := bindings.size.Get()
+				responseTab.SetText("Binary response (" + ct + ", " + sizeStr + ").\nUse the save button to write it to a file, or Raw to view the bytes as text.")
+			case showRaw:
+				responseTab.SetText(softWrap(responseBodyString))
+			default:
+				lang := detectLang(contentType, responseBodyString)
+				display := formatBody(responseBodyString, lang)
+				if rows := highlightGridRows(display, lang); rows != nil {
+					responseTab.Rows = rows
+					responseTab.Refresh()
+				} else {
+					responseTab.SetText(softWrap(display))
+				}
 			}
 		}
 
@@ -375,6 +484,7 @@ func (g *gui) makeResponseUI(request *core.Request) fyne.CanvasObject {
 		}
 	})
 	collapseBtn.Importance = widget.LowImportance
+	g.tabs[request.ID].toggleResponse = collapseBtn.OnTapped
 
 	// Timing waterfall shown while hovering the time label. Lives in this
 	// Stack (not a widget.PopUp — its overlay steals hover and flickers).

@@ -33,6 +33,7 @@ type gui struct {
 	requestList    *widget.List
 	envStore       *core.EnvStore
 	envList        *widget.List
+	envSelect      *widget.Select
 	collections    []*core.Collection
 	collectionTree *widget.Tree
 
@@ -40,19 +41,20 @@ type gui struct {
 	// new-request button, VS Code style: the last collection the user
 	// selected (or opened a request from) in the tree.
 	focusedCollection *core.Collection
-	requestCtx     context.Context
-	cancelRequest  context.CancelFunc
+	requestCtx        context.Context
+	cancelRequest     context.CancelFunc
 }
 
 type tab struct {
-	bindings    *bindings
-	item        *container.TabItem
-	request     *core.Request
-	bodyListner binding.DataListener
-	collection  *core.Collection // set when this tab mirrors a collection entry
-	colEntry    *core.Request    // the mirrored snapshot inside collection
-	send        func()           // taps this tab's Send button; Ctrl+Enter uses it
-	showSearch  func()           // opens this tab's response search bar; Ctrl+F uses it
+	bindings       *bindings
+	item           *container.TabItem
+	request        *core.Request
+	bodyListner    binding.DataListener
+	collection     *core.Collection // set when this tab mirrors a collection entry
+	colEntry       *core.Request    // the mirrored snapshot inside collection
+	send           func()           // taps this tab's Send button; Ctrl+Enter uses it
+	showSearch     func()           // opens this tab's response search bar; Ctrl+F uses it
+	toggleResponse func()           // collapses/expands this tab's response panel; Ctrl+` uses it
 }
 
 type bindings struct {
@@ -99,7 +101,7 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 	// is focused — a focused Entry swallows them — so entries created via
 	// newAppEntry forward to the same dispatcher.
 	winCanvas := (*window).Canvas()
-	for _, k := range []fyne.KeyName{fyne.KeyT, fyne.KeyW, fyne.KeyReturn, fyne.KeyF} {
+	for _, k := range []fyne.KeyName{fyne.KeyT, fyne.KeyW, fyne.KeyReturn, fyne.KeyF, fyne.KeyBackTick} {
 		winCanvas.AddShortcut(
 			&desktop.CustomShortcut{KeyName: k, Modifier: fyne.KeyModifierControl},
 			func(s fyne.Shortcut) { g.dispatchShortcut(s) },
@@ -114,14 +116,32 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 	versionLabel := widget.NewLabel("Version: " + version)
 	siteURL, _ := url.Parse("https://themyapi.com")
 	myAPISite := widget.NewHyperlink("Website", siteURL)
+	// Footer env switcher: same rows as the sidebar env list, switch-only.
+	// Delegates to envList.Select so activation logic lives in one place.
+	g.envSelect = widget.NewSelect(nil, func(s string) {
+		for i, opt := range g.envSelect.Options {
+			if opt == s {
+				g.envList.Select(i)
+				break
+			}
+		}
+	})
+	g.syncEnvSelect()
+
+	envLabel := widget.NewLabel("Environment:")
+	envLabel.Importance = widget.LowImportance
+
+	// Fixed width: the Select's own MinSize clips "No Environment"
+	envWidth := canvas.NewRectangle(color.Transparent)
+	envWidth.SetMinSize(fyne.NewSize(170, 0))
+	envSwitcher := container.NewHBox(envLabel, container.NewStack(envWidth, g.envSelect))
+
 	footerContent := container.NewHBox(
 		myAPISite,
-		canvas.NewCircle(theme.Color(theme.ColorNameDisabled)),
 		versionLabel,
-		canvas.NewRectangle(theme.Color(theme.ColorNameBackground)),
 	)
 
-	footer := container.NewThemeOverride(container.NewBorder(footerSeperator, nil, nil, footerContent, nil), &footerTheme{})
+	footer := container.NewThemeOverride(container.NewBorder(footerSeperator, nil, envSwitcher, footerContent, nil), &footerTheme{})
 
 	return container.NewBorder(nil, footer, nil, nil, baseView)
 }
@@ -159,6 +179,10 @@ func (g *gui) dispatchShortcut(s fyne.Shortcut) bool {
 	case fyne.KeyF:
 		if t := g.activeTab(); t != nil && t.showSearch != nil {
 			t.showSearch()
+		}
+	case fyne.KeyBackTick:
+		if t := g.activeTab(); t != nil && t.toggleResponse != nil {
+			t.toggleResponse()
 		}
 	default:
 		return false
@@ -231,6 +255,7 @@ func (g *gui) closeTab(ti *container.TabItem) {
 		g.tabs[deletable].colEntry = nil
 		g.tabs[deletable].send = nil
 		g.tabs[deletable].showSearch = nil
+		g.tabs[deletable].toggleResponse = nil
 		delete(g.tabs, deletable)
 	}
 
@@ -350,8 +375,10 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 					return
 				}
 
-				errorDialoge := dialog.NewError(err, *g.Window)
-				errorDialoge.Show()
+				// fyne.Do: this runs off the main thread
+				fyne.Do(func() {
+					dialog.NewError(err, *g.Window).Show()
+				})
 
 				return
 			}
@@ -401,9 +428,8 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 			// To update the current tab text as if it is dirty it set a *
 			if request.IsDirty {
 				request.IsDirty = false
-				g.doctabs.Selected().Text = entryTitle(request)
-
 				fyne.Do(func() {
+					g.doctabs.Selected().Text = entryTitle(request)
 					g.doctabs.Refresh()
 				})
 			}
@@ -452,7 +478,7 @@ func (g *gui) makeTab(request *core.Request) *container.TabItem {
 	requestResponseContainer := container.NewStack(requestUI, response)
 
 	tabName := entryTitle(request)
-	if request.URL == "" {
+	if request.IsDirty {
 		tabName += " *"
 	}
 
@@ -475,9 +501,6 @@ func (g *gui) makeSideBar() *fyne.Container {
 
 	g.requestHistory = core.ListHistory()
 	g.renderHistoryContent()
-
-	rightBorder := canvas.NewLine(theme.Color(theme.ColorNameSeparator))
-	rightBorder.StrokeWidth = 1.0
 
 	sideBarLabel := sectionHeader("History")
 
@@ -513,16 +536,19 @@ func (g *gui) makeSideBar() *fyne.Container {
 	collectionTabContent := g.makeCollectionContent()
 	envTabContent := g.makeEnvContent()
 
-	// Active state: a primary-coloured left accent bar, more visible than a grey background
-	historyTabActive := canvas.NewRectangle(theme.Color(theme.ColorNamePrimary))
-	historyTabActive.CornerRadius = 2
-	historyTabActive.SetMinSize(fyne.NewSize(3, 0))
-	collectionTabActive := canvas.NewRectangle(theme.Color(theme.ColorNamePrimary))
-	collectionTabActive.CornerRadius = 2
-	collectionTabActive.SetMinSize(fyne.NewSize(3, 0))
-	envTabActive := canvas.NewRectangle(theme.Color(theme.ColorNamePrimary))
-	envTabActive.CornerRadius = 2
-	envTabActive.SetMinSize(fyne.NewSize(3, 0))
+	// Active state: a primary-coloured left accent bar, more visible than a
+	// grey background. The transparent spacer under it always reserves the
+	// bar's 3px column, so toggling the bar never shifts the icons.
+	tabAccent := func() (*canvas.Rectangle, fyne.CanvasObject) {
+		bar := canvas.NewRectangle(theme.Color(theme.ColorNamePrimary))
+		bar.CornerRadius = 2
+		spacer := canvas.NewRectangle(color.Transparent)
+		spacer.SetMinSize(fyne.NewSize(3, 0))
+		return bar, container.NewStack(spacer, bar)
+	}
+	historyTabActive, historyAccentSlot := tabAccent()
+	collectionTabActive, collectionAccentSlot := tabAccent()
+	envTabActive, envAccentSlot := tabAccent()
 
 	// History is the default tab so it will stay active on startup
 	collectionTabActive.Hide()
@@ -546,7 +572,7 @@ func (g *gui) makeSideBar() *fyne.Container {
 
 	historyTab.Importance = widget.LowImportance
 	// Active indicator: a 3px primary-coloured strip on the LEFT of the icon
-	historyTabIconWrap := container.NewBorder(nil, nil, historyTabActive, nil, historyTab)
+	historyTabIconWrap := container.NewBorder(nil, nil, historyAccentSlot, nil, historyTab)
 
 	collectionTab := widget.NewButtonWithIcon("", theme.FolderIcon(), func() {
 		collectionTabContent.Show()
@@ -564,7 +590,7 @@ func (g *gui) makeSideBar() *fyne.Container {
 
 	})
 	collectionTab.Importance = widget.LowImportance
-	collectionTabIconWrap := container.NewBorder(nil, nil, collectionTabActive, nil, collectionTab)
+	collectionTabIconWrap := container.NewBorder(nil, nil, collectionAccentSlot, nil, collectionTab)
 
 	envTab := widget.NewButtonWithIcon("", theme.ComputerIcon(), func() {
 		envTabContent.Show()
@@ -582,7 +608,7 @@ func (g *gui) makeSideBar() *fyne.Container {
 
 	})
 	envTab.Importance = widget.LowImportance
-	envTabIconWrap := container.NewBorder(nil, nil, envTabActive, nil, envTab)
+	envTabIconWrap := container.NewBorder(nil, nil, envAccentSlot, nil, envTab)
 
 	shortCutIcon := widget.NewIcon(theme.NewThemedResource(resourceKeyboardSvg))
 	shortcutsButton := widget.NewButtonWithIcon("", shortCutIcon.Resource, func() {
@@ -597,6 +623,7 @@ func (g *gui) makeSideBar() *fyne.Container {
 			{"Ctrl + T", "New tab"},
 			{"Ctrl + W", "Close tab"},
 			{"Ctrl + F", "Search response"},
+			{"Ctrl + `", "Toggle response panel"},
 			{"Esc", "Close response search"},
 		}
 
@@ -641,10 +668,12 @@ func (g *gui) makeSideBar() *fyne.Container {
 		envTabContent,
 	)
 
+	// Separator OUTSIDE the icons+shortcuts column so it runs the full height
 	return container.NewBorder(
 		nil,
 		nil,
-		container.NewBorder(nil, shortcutsButton, nil, rightBorder, sideSwitcher),
+		container.NewBorder(nil, nil, nil, widget.NewSeparator(),
+			container.NewBorder(nil, shortcutsButton, nil, nil, sideSwitcher)),
 		nil,
 		sideBarTabs,
 	)
@@ -665,16 +694,16 @@ func methodColor(method string) *color.RGBA {
 		return &color.RGBA{216, 90, 121, 255}
 
 	case "OPTIONS":
-		return &color.RGBA{181, 234, 215, 255}
+		return &color.RGBA{26, 158, 124, 255}
 
 	case "HEAD":
 		return &color.RGBA{122, 84, 189, 255}
 
 	case "CONNECT":
-		return &color.RGBA{175, 203, 255, 255}
+		return &color.RGBA{70, 130, 220, 255}
 
 	case "TRACE":
-		return &color.RGBA{248, 216, 168, 255}
+		return &color.RGBA{192, 132, 30, 255}
 
 	default:
 		return &color.RGBA{72, 180, 97, 255}
@@ -688,6 +717,10 @@ func sectionHeader(text string) *canvas.Text {
 	t.TextStyle.Bold = true
 	return t
 }
+
+// titleClip is the one rune cap for clipped names: tab titles, collection
+// entries and the footer env switcher.
+const titleClip = 22
 
 // tabTitle renders a tab as "GET /users" instead of a truncated raw URL
 func tabTitle(method, rawURL string) string {
@@ -704,8 +737,8 @@ func tabTitle(method, rawURL string) string {
 		}
 	}
 
-	if r := []rune(label); len(r) > 22 {
-		label = string(r[:22]) + "…"
+	if r := []rune(label); len(r) > titleClip {
+		label = string(r[:titleClip]) + "…"
 	}
 
 	return method + " " + label

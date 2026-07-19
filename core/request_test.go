@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +45,60 @@ func TestSendRequestURLEncodedBody(t *testing.T) {
 	}
 	if gotBody != "a=1+2&b=%26%3D" {
 		t.Fatalf("body: %q", gotBody)
+	}
+}
+
+func TestSendRequestMultipartFile(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "upload.txt")
+	if err := os.WriteFile(filePath, []byte("file-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotField, gotFileName, gotFileBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("parse multipart: %v", err)
+			return
+		}
+		gotField = r.FormValue("name")
+		f, fh, err := r.FormFile("doc")
+		if err != nil {
+			t.Errorf("form file: %v", err)
+			return
+		}
+		defer f.Close()
+		gotFileName = fh.Filename
+		b, _ := io.ReadAll(f)
+		gotFileBody = string(b)
+	}))
+	defer server.Close()
+
+	req := testRequest("multipartfile", server.URL)
+	req.Method = "POST"
+	req.BodyType = "Form"
+	req.Body = Body{Form: &[]FormType{
+		{Checked: true, Key: "name", Value: "bob"},
+		{Checked: true, Key: "doc", Value: filePath, IsFile: true},
+		{Checked: false, Key: "off", Value: filePath, IsFile: true},
+	}}
+	defer DeleteHistory("multipartfile")
+
+	if _, err := req.SendRequest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if gotField != "bob" || gotFileName != "upload.txt" || gotFileBody != "file-bytes" {
+		t.Fatalf("field=%q filename=%q body=%q", gotField, gotFileName, gotFileBody)
+	}
+
+	// Missing file should surface as an error, not a silent empty part
+	req2 := testRequest("multipartmissing", server.URL)
+	req2.Method = "POST"
+	req2.BodyType = "Form"
+	req2.Body = Body{Form: &[]FormType{{Checked: true, Key: "doc", Value: filepath.Join(dir, "gone.txt"), IsFile: true}}}
+	if _, err := req2.SendRequest(context.Background()); err == nil {
+		t.Fatal("missing upload file should error")
 	}
 }
 

@@ -99,7 +99,7 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 					down.Disabled = i == len(g.collections)-1
 
 					del := fyne.NewMenuItem("Delete", func() {
-						dialog.NewConfirm("Delete Collection", "Delete \""+col.Name+"\" and its requests?", func(confirmed bool) {
+						dialog.NewConfirm("Delete Collection", "Delete \""+col.Name+"\" and its requests? This cannot be undone.", func(confirmed bool) {
 							if !confirmed {
 								return
 							}
@@ -175,7 +175,7 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 				down.Disabled = i == len(col.Requests)-1
 
 				remove := fyne.NewMenuItem("Remove", func() {
-					dialog.NewConfirm("Remove Request", "Remove this request from \""+col.Name+"\"?", func(confirmed bool) {
+					dialog.NewConfirm("Remove Request", "Remove this request from \""+col.Name+"\"? This cannot be undone.", func(confirmed bool) {
 						if !confirmed {
 							return
 						}
@@ -230,7 +230,7 @@ func (g *gui) makeCollectionContent() *fyne.Container {
 
 	// New request lands in the focused collection, VS Code style; with no
 	// collection focused it is just a plain detached tab.
-	newReqBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+	newReqBtn := widget.NewButtonWithIcon("New", theme.ContentAddIcon(), func() {
 		col := g.validFocusedCollection()
 
 		if col == nil {
@@ -330,8 +330,8 @@ func entryTitle(r *core.Request) string {
 	}
 
 	name := r.Name
-	if ru := []rune(name); len(ru) > 22 {
-		name = string(ru[:22]) + "…"
+	if ru := []rune(name); len(ru) > titleClip {
+		name = string(ru[:titleClip]) + "…"
 	}
 
 	return r.Method + " " + name

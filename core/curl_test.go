@@ -80,8 +80,12 @@ func TestParseCurl(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r.BodyType != "Form" || len(*r.Body.Form) != 2 || (*r.Body.Form)[1].Value != "@photo.png" {
-			t.Fatalf("bodytype=%q form=%+v", r.BodyType, r.Body.Form)
+		rows := *r.Body.Form
+		if r.BodyType != "Form" || len(rows) != 2 || rows[0].IsFile {
+			t.Fatalf("bodytype=%q form=%+v", r.BodyType, rows)
+		}
+		if !rows[1].IsFile || rows[1].Value != "photo.png" {
+			t.Fatalf("-F file=@photo.png should be a file row: %+v", rows[1])
 		}
 	})
 
