@@ -32,7 +32,7 @@ jobs:
 
       - name: Install Linux dependencies
         if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
+        run: sudo apt-get update && sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
 
       - name: Install fyne CLI
         run: go install fyne.io/tools/cmd/fyne@latest
