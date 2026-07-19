@@ -60,7 +60,7 @@ func (g *gui) renderHistoryContent() {
 			label.TextSize = 10
 
 			badge := container.NewCenter(container.NewStack(pillBg, container.NewPadded(label)))
-			url := widget.NewLabel("https://themyapi.com/")
+			url := widget.NewLabel("https://vardana.dev/myapi/")
 			url.Truncation = fyne.TextTruncateEllipsis
 
 			timeElapsed := canvas.NewText("1d", theme.Color(theme.ColorNameDisabled))

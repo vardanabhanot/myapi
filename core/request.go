@@ -53,6 +53,15 @@ type Auth struct {
 	BasicPass    string `json:"BasicPass"`
 	BearerAuth   string `json:"BearerAuth"`
 	BearerPrefix string `json:"BearerPrefix"`
+
+	APIKeyName  string `json:"APIKeyName,omitempty"`
+	APIKeyValue string `json:"APIKeyValue,omitempty"`
+	APIKeyIn    string `json:"APIKeyIn,omitempty"` // "Query"; anything else means header
+
+	OAuthTokenURL     string `json:"OAuthTokenURL,omitempty"`
+	OAuthClientID     string `json:"OAuthClientID,omitempty"`
+	OAuthClientSecret string `json:"OAuthClientSecret,omitempty"`
+	OAuthScope        string `json:"OAuthScope,omitempty"`
 }
 
 type FormType struct {
@@ -112,6 +121,24 @@ func (r *Request) SendRequest(ctx context.Context) (*Response, error) {
 	// Setting Bearer auth
 	if r.AuthType == "Bearer" && r.Auth.BearerAuth != "" && r.Auth.BearerPrefix != "" {
 		req.Header.Add("Authorization", r.Auth.BearerPrefix+" "+ApplyEnv(r.Auth.BearerAuth))
+	}
+
+	if r.AuthType == "API Key" && r.Auth.APIKeyName != "" {
+		if r.Auth.APIKeyIn == "Query" {
+			q := req.URL.Query()
+			q.Set(ApplyEnv(r.Auth.APIKeyName), ApplyEnv(r.Auth.APIKeyValue))
+			req.URL.RawQuery = q.Encode()
+		} else {
+			req.Header.Set(ApplyEnv(r.Auth.APIKeyName), ApplyEnv(r.Auth.APIKeyValue))
+		}
+	}
+
+	if r.AuthType == "OAuth2" && r.Auth.OAuthTokenURL != "" {
+		token, err := oauthToken(ctx, r.Auth, r.Settings.SkipTLSVerify)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	if r.Body.Json != "" || r.Body.Xml != "" || r.Body.Text != "" || r.Body.Form != nil {

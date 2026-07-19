@@ -113,6 +113,8 @@ func (r *Request) ResolveEnv() *Request {
 		c.Auth.BasicUser = ApplyEnv(c.Auth.BasicUser)
 		c.Auth.BasicPass = ApplyEnv(c.Auth.BasicPass)
 		c.Auth.BearerAuth = ApplyEnv(c.Auth.BearerAuth)
+		c.Auth.APIKeyName = ApplyEnv(c.Auth.APIKeyName)
+		c.Auth.APIKeyValue = ApplyEnv(c.Auth.APIKeyValue)
 	}
 
 	return c

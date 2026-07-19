@@ -172,3 +172,77 @@ func TestSettingsSkipTLSVerify(t *testing.T) {
 		t.Fatalf("SkipTLSVerify should succeed, got %s", res.Status)
 	}
 }
+
+func TestSendRequestAPIKey(t *testing.T) {
+	var gotHeader, gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-API-Key")
+		gotQuery = r.URL.Query().Get("api_key")
+	}))
+	defer server.Close()
+
+	req := testRequest("apikeyheader", server.URL)
+	req.AuthType = "API Key"
+	req.Auth = &Auth{APIKeyName: "X-API-Key", APIKeyValue: "sekrit"}
+	defer DeleteHistory("apikeyheader")
+	if _, err := req.SendRequest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "sekrit" {
+		t.Fatalf("header api key: %q", gotHeader)
+	}
+
+	req = testRequest("apikeyquery", server.URL+"/?existing=1")
+	req.AuthType = "API Key"
+	req.Auth = &Auth{APIKeyName: "api_key", APIKeyValue: "qsekrit", APIKeyIn: "Query"}
+	defer DeleteHistory("apikeyquery")
+	if _, err := req.SendRequest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "qsekrit" {
+		t.Fatalf("query api key: %q", gotQuery)
+	}
+}
+
+func TestSendRequestOAuth2(t *testing.T) {
+	tokenHits := 0
+	var gotAuthz, gotGrant, gotBasicUser string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		gotBasicUser, _, _ = r.BasicAuth()
+		r.ParseForm()
+		gotGrant = r.PostForm.Get("grant_type")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"tok123","token_type":"Bearer","expires_in":3600}`))
+	})
+	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
+		gotAuthz = r.Header.Get("Authorization")
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	req := testRequest("oauthtest", server.URL+"/api")
+	req.AuthType = "OAuth2"
+	req.Auth = &Auth{OAuthTokenURL: server.URL + "/token", OAuthClientID: "cid", OAuthClientSecret: "csec"}
+	defer DeleteHistory("oauthtest")
+
+	for i := 0; i < 2; i++ { // second send must reuse the cached token
+		if _, err := req.SendRequest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if gotAuthz != "Bearer tok123" {
+		t.Fatalf("authorization: %q", gotAuthz)
+	}
+	if gotGrant != "client_credentials" {
+		t.Fatalf("grant_type: %q", gotGrant)
+	}
+	if gotBasicUser != "cid" {
+		t.Fatalf("basic user: %q", gotBasicUser)
+	}
+	if tokenHits != 1 {
+		t.Fatalf("token endpoint hit %d times, want 1 (cache)", tokenHits)
+	}
+}

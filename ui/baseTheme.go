@@ -79,6 +79,10 @@ func (m BaseTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) co
 			return color.NRGBA{R: 218, G: 218, B: 218, A: 255}
 		case theme.ColorNameInputBorder:
 			return color.NRGBA{R: 206, G: 206, B: 206, A: 255}
+		case theme.ColorNameDisabled:
+			// Doubles as the muted-label color (sectionHeader, history
+			// timestamps); Fyne's pale default washes out on light bg.
+			return color.NRGBA{R: 105, G: 105, B: 105, A: 255}
 		case theme.ColorNamePlaceHolder:
 			return color.NRGBA{R: 140, G: 140, B: 140, A: 255}
 		case theme.ColorNameMenuBackground:

@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -35,7 +36,41 @@ func GenerateCode(language string, request *core.Request) (string, error) {
 	}
 	// Resolve {{var}} placeholders once here so every generator emits
 	// runnable snippets instead of raw placeholders.
-	return gen.Generate(request.ResolveEnv()), nil
+	resolved := request.ResolveEnv()
+	normalizeAuth(resolved)
+	return gen.Generate(resolved), nil
+}
+
+// normalizeAuth folds the auth types generators don't know about into plain
+// headers/query on the resolved copy, so generators only ever see
+// Basic/Bearer and never need per-type cases.
+func normalizeAuth(r *core.Request) {
+	if r.Auth == nil {
+		return
+	}
+	if r.Headers == nil {
+		r.Headers = &[]core.FormType{}
+	}
+
+	switch r.AuthType {
+	case "API Key":
+		if r.Auth.APIKeyName == "" {
+			return
+		}
+		if r.Auth.APIKeyIn == "Query" {
+			if u, err := url.Parse(r.URL); err == nil {
+				q := u.Query()
+				q.Set(r.Auth.APIKeyName, r.Auth.APIKeyValue)
+				u.RawQuery = q.Encode()
+				r.URL = u.String()
+			}
+		} else {
+			*r.Headers = append(*r.Headers, core.FormType{Checked: true, Key: r.Auth.APIKeyName, Value: r.Auth.APIKeyValue})
+		}
+	case "OAuth2":
+		// The real token is fetched at send time; snippets get a placeholder.
+		*r.Headers = append(*r.Headers, core.FormType{Checked: true, Key: "Authorization", Value: "Bearer YOUR_ACCESS_TOKEN"})
+	}
 }
 
 // scriptQuote single-quotes s for JavaScript and Python — the two share

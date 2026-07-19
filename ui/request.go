@@ -17,12 +17,6 @@ import (
 	"github.com/vardanabhanot/myapi/core/codegen"
 )
 
-type authOptHolder struct {
-	none   fyne.CanvasObject
-	basic  fyne.CanvasObject
-	bearer fyne.CanvasObject
-}
-
 type bodyOptHolder struct {
 	json fyne.CanvasObject
 	xml  fyne.CanvasObject
@@ -97,9 +91,10 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		request.Auth = &core.Auth{}
 	}
 
-	// Auth Options
-	authOptIns := &authOptHolder{}
-	authOptIns.none = container.NewVBox(widget.NewLabel("No Authentication Selected"))
+	// Auth Options; authViews maps radio value → form, shown/hidden in the
+	// radio callback so adding an auth type is one map entry.
+	authViews := map[string]fyne.CanvasObject{}
+	authViews["None"] = container.NewVBox(widget.NewLabel("No Authentication Selected"))
 
 	basicUsername := widget.NewEntry()
 	basicUsername.SetPlaceHolder("Username")
@@ -124,7 +119,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		request.Auth.BasicPass = s
 	}
 
-	authOptIns.basic = container.NewBorder(
+	authViews["Basic"] = container.NewBorder(
 		basicHeading,
 		nil,
 		nil,
@@ -163,7 +158,7 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		request.Auth.BearerAuth = s
 	}
 
-	authOptIns.bearer = container.NewBorder(
+	authViews["Bearer"] = container.NewBorder(
 		bearerHeading,
 		nil,
 		nil,
@@ -174,36 +169,99 @@ func (g *gui) makeRequestUI(request *core.Request) fyne.CanvasObject {
 		),
 	)
 
-	authOptIns.none.Hide()
-	authOptIns.basic.Hide()
-	authOptIns.bearer.Hide()
+	// API Key
+	apiKeyName := widget.NewEntry()
+	apiKeyName.SetPlaceHolder("X-API-Key")
+	apiKeyName.SetText(request.Auth.APIKeyName)
+	apiKeyName.OnChanged = func(s string) {
+		request.Auth.APIKeyName = s
+	}
 
-	authOptionView := container.NewStack(
-		authOptIns.none,
-		authOptIns.basic,
-		authOptIns.bearer,
+	apiKeyValue := widget.NewEntry()
+	apiKeyValue.SetPlaceHolder("Value")
+	apiKeyValue.SetText(request.Auth.APIKeyValue)
+	apiKeyValue.OnChanged = func(s string) {
+		request.Auth.APIKeyValue = s
+	}
+
+	apiKeyIn := widget.NewSelect([]string{"Header", "Query"}, func(s string) {
+		request.Auth.APIKeyIn = s
+	})
+	if request.Auth.APIKeyIn != "" {
+		apiKeyIn.SetSelected(request.Auth.APIKeyIn)
+	} else {
+		apiKeyIn.SetSelected("Header")
+	}
+
+	authViews["API Key"] = container.NewBorder(
+		sectionHeader("API Key"),
+		nil,
+		nil,
+		nil,
+		container.NewVBox(
+			container.NewBorder(nil, nil, widget.NewLabel("Key"), nil, apiKeyName),
+			container.NewBorder(nil, nil, widget.NewLabel("Value"), nil, apiKeyValue),
+			container.NewBorder(nil, nil, widget.NewLabel("Add to"), nil, apiKeyIn),
+		),
 	)
 
+	// OAuth2 (client credentials); token fetched and cached at send time
+	oauthTokenURL := widget.NewEntry()
+	oauthTokenURL.SetPlaceHolder("https://auth.example.com/oauth/token")
+	oauthTokenURL.SetText(request.Auth.OAuthTokenURL)
+	oauthTokenURL.OnChanged = func(s string) {
+		request.Auth.OAuthTokenURL = s
+	}
+
+	oauthClientID := widget.NewEntry()
+	oauthClientID.SetText(request.Auth.OAuthClientID)
+	oauthClientID.OnChanged = func(s string) {
+		request.Auth.OAuthClientID = s
+	}
+
+	oauthClientSecret := widget.NewEntry()
+	oauthClientSecret.Password = true
+	oauthClientSecret.SetText(request.Auth.OAuthClientSecret)
+	oauthClientSecret.OnChanged = func(s string) {
+		request.Auth.OAuthClientSecret = s
+	}
+
+	oauthScope := widget.NewEntry()
+	oauthScope.SetPlaceHolder("Optional, space separated")
+	oauthScope.SetText(request.Auth.OAuthScope)
+	oauthScope.OnChanged = func(s string) {
+		request.Auth.OAuthScope = s
+	}
+
+	authViews["OAuth2"] = container.NewBorder(
+		sectionHeader("OAuth 2.0 — Client Credentials"),
+		nil,
+		nil,
+		nil,
+		container.NewVBox(
+			container.NewBorder(nil, nil, widget.NewLabel("Token URL"), nil, oauthTokenURL),
+			container.NewBorder(nil, nil, widget.NewLabel("Client ID"), nil, oauthClientID),
+			container.NewBorder(nil, nil, widget.NewLabel("Client Secret"), nil, oauthClientSecret),
+			container.NewBorder(nil, nil, widget.NewLabel("Scope"), nil, oauthScope),
+		),
+	)
+
+	authOptionView := container.NewStack()
+	for _, view := range authViews {
+		view.Hide()
+		authOptionView.Add(view)
+	}
+
 	// TODO:: Will need to implement AWS as well here
-	authOptions := widget.NewRadioGroup([]string{"None", "Basic", "Bearer"}, func(value string) {
+	authOptions := widget.NewRadioGroup([]string{"None", "Basic", "Bearer", "API Key", "OAuth2"}, func(value string) {
 		request.AuthType = value
 
-		switch value {
-		case "None":
-			authOptIns.none.Show()
-			authOptIns.basic.Hide()
-			authOptIns.bearer.Hide()
-
-		case "Basic":
-			authOptIns.basic.Show()
-			authOptIns.none.Hide()
-			authOptIns.bearer.Hide()
-
-		case "Bearer":
-			authOptIns.bearer.Show()
-			authOptIns.basic.Hide()
-			authOptIns.none.Hide()
-
+		for name, view := range authViews {
+			if name == value {
+				view.Show()
+			} else {
+				view.Hide()
+			}
 		}
 	})
 

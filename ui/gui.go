@@ -114,7 +114,7 @@ func MakeGUI(window *fyne.Window, version string) fyne.CanvasObject {
 
 	footerSeperator := widget.NewSeparator()
 	versionLabel := widget.NewLabel("Version: " + version)
-	siteURL, _ := url.Parse("https://themyapi.com")
+	siteURL, _ := url.Parse("https://vardana.dev/myapi/")
 	myAPISite := widget.NewHyperlink("Website", siteURL)
 	// Footer env switcher: same rows as the sidebar env list, switch-only.
 	// Delegates to envList.Select so activation logic lives in one place.
