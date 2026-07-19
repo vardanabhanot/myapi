@@ -1,29 +1,68 @@
-﻿<img src="/myapi-logo-light.png" alt="myAPI logo" title="myAPI" align="left" height="60px"/>
+<img src="/myapi-logo-light.png" alt="myAPI logo" title="myAPI" align="left" height="60px"/>
 <br>
 
 # myAPI
 
-myAPI is a simple API testing tool, made in Go using Fyne Toolkit
+**The API client that's just an app.** myAPI is a fast, native API testing tool written in Go with the [Fyne](https://fyne.io) toolkit. No account, no cloud, no Electron — open the app, send the request.
+
+**Website:** [vardana.dev/myapi](https://vardana.dev/myapi/) · **Download:** [latest release](https://github.com/vardanabhanot/myapi/releases/latest)
 
 > [!NOTE]
-> This project is in its early stages, but you're welcome to give it a try!
->
+> myAPI is in **alpha**. It's usable for day-to-day request testing, but expect rough edges and breaking changes between releases. Bug reports are very welcome.
 
 ## Screenshots
-![my-api-dev-state.png](https://github.com/vardanabhanot/myapi/blob/main/my-api-dev-state.png)
-![my-api-dev-state-dark.png](https://github.com/vardanabhanot/myapi/blob/main/my-api-dev-state-dark.png)
 
-## TODO
+![myAPI in light mode](https://github.com/vardanabhanot/myapi/blob/main/my-api-dev-state.png)
+![myAPI in dark mode](https://github.com/vardanabhanot/myapi/blob/main/my-api-dev-state-dark.png)
 
-- [ ] Comment the code well.
-- [X] Syntax highlighting of Response.
-- [X] Shortcut to hide the response container.
-- [X] Code generator(Base structure done and basic support for cURL and PHP added)
-- [ ] Workspace
-- [X] Variables(Environment variables and more)
-- [X] Collections, so that similar API endpoints could be grouped.
-- [ ] Option to be able to document endpoints.
-- [ ] Support for multipart forms.
-- [ ] Adding a Spinner, Fyne has Activity widget, but want to add a Spinner when the request is happening.
-- [X] Option to cancel the request.
-- [X] Fix the memory issue that occurs when a lot of tabs with content exceding 200 characters are used, as memory usage increases exponentially.
+## Features
+
+- **Native & offline** — one small binary, no browser runtime; your data never leaves your disk
+- **Collections** — group related endpoints, rename and reorganize them as your API grows
+- **Request history** — every request you send is saved locally
+- **Tabs** — work on several requests side by side
+- **Environment variables** — define `{{variables}}` once, reuse them across URLs, headers, and bodies; quick-switch environments from the footer
+- **Auth** — API Key and OAuth 2.0
+- **cURL import & export** — paste a cURL command to create a request, or copy any request out as cURL
+- **Code generation** — turn any request into cURL, Go, JavaScript, PHP, or Python code
+- **Syntax-highlighted responses**, request timing, and cancellable in-flight requests
+- **Light & dark themes**
+
+## Install
+
+Grab a build from the [releases page](https://github.com/vardanabhanot/myapi/releases/latest):
+
+| Platform | Asset |
+|----------|-------|
+| Windows  | `myapi-windows-amd64.zip` |
+| Linux    | `myapi-linux-amd64.tar.xz` |
+| macOS    | coming soon |
+
+Unpack and run — there's no installer and nothing else to set up.
+
+### Build from source
+
+Requires [Go](https://go.dev) and the [Fyne prerequisites](https://docs.fyne.io/started/) (a C compiler; on Linux also the graphics dev packages):
+
+```sh
+git clone https://github.com/vardanabhanot/myapi
+cd myapi
+go build .
+```
+
+## Roadmap
+
+- [ ] macOS builds
+- [ ] Workspaces
+- [ ] OpenAPI / Postman import
+- [ ] Endpoint documentation
+- [ ] Multipart form support
+- [ ] Request spinner while a request is in flight
+
+## Contributing
+
+myAPI is built in the open. [Star the repo](https://github.com/vardanabhanot/myapi), [file an issue](https://github.com/vardanabhanot/myapi/issues), or send a pull request.
+
+## License
+
+[MIT](LICENSE)
